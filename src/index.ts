@@ -2,7 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { getMcpConfig, RoamError } from "@roam-research/roam-tools-core";
+import { getMcpConfig, RoamError, tools as roamTools, routeToolCall } from "@roam-research/roam-tools-core";
 import { createClient } from "./roam.js";
 import {
   GetNodeTypesSchema, getNodeTypesDescription, handleGetNodeTypes,
@@ -49,6 +49,24 @@ import {
 import {
   GetPilotSupportSchema, getPilotSupportDescription, handleGetPilotSupport,
 } from "./tools/get-pilot-support.js";
+import {
+  ExtractPilotDataSchema, extractPilotDataDescription, handleExtractPilotData,
+} from "./tools/extract-pilot-data.js";
+import {
+  SavePilotIndexSchema, savePilotIndexDescription, handleSavePilotIndex,
+} from "./tools/save-pilot-index.js";
+import {
+  QueryPilotInsightsSchema, queryPilotInsightsDescription, handleQueryPilotInsights,
+} from "./tools/query-pilot-insights.js";
+import {
+  CheckIndexFreshnessSchema, checkIndexFreshnessDescription, handleCheckIndexFreshness,
+} from "./tools/check-index-freshness.js";
+import {
+  DeepSearchSchema, deepSearchDescription, handleDeepSearch,
+} from "./tools/deep-search.js";
+import {
+  IndexPilotPagesSchema, indexPilotPagesDescription, handleIndexPilotPages,
+} from "./tools/index-pilot-pages.js";
 
 const server = new McpServer({
   name: "discourse-graph-mcp",
@@ -89,6 +107,26 @@ const withClient = (
     }
   };
 };
+
+// ── Roam base tools (re-exported from @roam-research/roam-tools-core) ──
+for (const tool of roamTools) {
+  server.registerTool(tool.name, {
+    description: tool.description,
+    inputSchema: tool.schema,
+  }, async (args) => {
+    try {
+      return await routeToolCall(tool.name, args);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text" as const, text: message }],
+        isError: true,
+      };
+    }
+  });
+}
+
+// ── Discourse Graph tools ──
 
 // Tool 1: Get discourse node type definitions
 server.tool("get_discourse_node_types", getNodeTypesDescription,
@@ -220,8 +258,10 @@ server.tool("get_pilot_users", getPilotUsersDescription,
   withClient(async (client) => handleGetPilotUsers(client)),
 );
 
-// Tool 15: Search pilot user pages for feature support
-server.tool("get_pilot_support", getPilotSupportDescription,
+// ── Pilot Analysis — User-facing ──
+
+// Search pilot pages live for a specific feature
+server.tool("search_pilots_live", getPilotSupportDescription,
   GetPilotSupportSchema.shape,
   withClient(async (client, _n, args) =>
     handleGetPilotSupport(
@@ -230,6 +270,81 @@ server.tool("get_pilot_support", getPilotSupportDescription,
       Array.isArray(args.search_terms) ? args.search_terms as string[] : undefined,
     ),
   ),
+);
+
+// Build/update the pilot knowledge index (auto-paginated)
+server.tool("index_pilot_pages", indexPilotPagesDescription,
+  IndexPilotPagesSchema.shape,
+  withClient(async (client, _n, args) =>
+    handleIndexPilotPages(
+      client,
+      typeof args.batch_size === "number" ? args.batch_size : undefined,
+      typeof args.offset === "number" ? args.offset : undefined,
+    ),
+  ),
+);
+
+// Query pilot insights from the knowledge index
+server.tool("query_pilot_insights", queryPilotInsightsDescription,
+  QueryPilotInsightsSchema.shape,
+  async (args) => {
+    try {
+      return await handleQueryPilotInsights(args as Record<string, unknown>);
+    } catch (error) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+// Check if the knowledge index is up to date
+server.tool("check_index_freshness", checkIndexFreshnessDescription,
+  CheckIndexFreshnessSchema.shape,
+  withClient(async (client) => handleCheckIndexFreshness(client)),
+);
+
+// Combined index + live search in one call
+server.tool("deep_pilot_search", deepSearchDescription,
+  DeepSearchSchema.shape,
+  withClient(async (client, _n, args) =>
+    handleDeepSearch(
+      client,
+      args.query as string,
+      Array.isArray(args.search_terms) ? args.search_terms as string[] : undefined,
+      typeof args.skip_live_search === "boolean" ? args.skip_live_search : undefined,
+    ),
+  ),
+);
+
+// ── Pilot Analysis — Indexing pipeline internals ──
+// These are used by Claude during the indexing workflow, not invoked directly by users.
+
+// Extract specific pilot pages (used internally by index_pilot_pages flow)
+server.tool("extract_pilot_data", extractPilotDataDescription,
+  ExtractPilotDataSchema.shape,
+  withClient(async (client, _n, args) =>
+    handleExtractPilotData(
+      client,
+      Array.isArray(args.pilot_uids) ? args.pilot_uids as string[] : undefined,
+    ),
+  ),
+);
+
+// Save classified data to the index file (called by Claude after classifying)
+server.tool("save_pilot_index", savePilotIndexDescription,
+  SavePilotIndexSchema.shape,
+  async (args) => {
+    try {
+      return await handleSavePilotIndex(args as Record<string, unknown>);
+    } catch (error) {
+      return {
+        content: [{ type: "text" as const, text: `Error: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
 );
 
 async function main() {

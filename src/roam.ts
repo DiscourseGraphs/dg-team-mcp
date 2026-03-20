@@ -112,6 +112,17 @@ export async function getBasicTreeByParentUid(
   return nodes;
 }
 
+export async function getPageEditTime(
+  client: RoamClient,
+  uid: string,
+): Promise<number | null> {
+  const results = await datalogQuery<[number]>(
+    client,
+    `[:find ?edit-time :where [?p :block/uid "${uid}"] [?p :edit/time ?edit-time]]`,
+  );
+  return results[0]?.[0] ?? null;
+}
+
 export async function getNodePages(
   client: RoamClient,
 ): Promise<Map<string, { text: string; children: TreeNode[] }>> {
