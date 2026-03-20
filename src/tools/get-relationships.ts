@@ -9,8 +9,10 @@
 
 import { z } from "zod";
 import type { RoamClient } from "@roam-research/roam-tools-core";
-import { getDiscourseNodeTypes } from "../discourse-config.js";
-import fireQuery from "../query/fire-query.js";
+import { getInternalDiscourseConfig } from "../discourse-config.js";
+import { fireQueryDetailed } from "../query/fire-query.js";
+import { registerDiscourseTranslators } from "../query/register-discourse-translators.js";
+import type { Result as QueryResult } from "../query/types.js";
 
 export const GetRelationshipsSchema = z.object({
   graph: z.string().optional().describe("Graph name or nickname."),
@@ -26,89 +28,136 @@ export const handleGetRelationships = async (
   client: RoamClient,
   targetUid: string,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> => {
-  const config = await getDiscourseNodeTypes(client);
+  const config = await getInternalDiscourseConfig(client);
+  const unregister = registerDiscourseTranslators(config);
 
-  // Build a map of typeId → name for readable output
-  const nodeNameByType: Record<string, string> = {};
-  config.nodes.forEach((n) => {
-    nodeNameByType[n.typeId] = n.name;
-  });
-  nodeNameByType["*"] = "Any";
+  try {
+    const nodeNameByType: Record<string, string> = {};
+    config.nodes.forEach((n) => {
+      nodeNameByType[n.typeId] = n.name;
+    });
+    nodeNameByType["*"] = "Any";
 
-  // For each relation, check if this node could be a source or destination,
-  // then query for the other end.
-  // Pattern from getDiscourseContextResults.ts:202-217
-  const results: Array<{
-    relation: string;
-    direction: "forward" | "complement";
-    results: Array<{ text: string; uid: string }>;
-  }> = [];
+    const dedupedRelations = Array.from(
+      new Map(
+        config.relations.map((relation) => [
+          [
+            relation.id,
+            relation.label,
+            relation.source,
+            relation.destination,
+            relation.complement,
+          ].join("::"),
+          relation,
+        ]),
+      ).values(),
+    );
 
-  await Promise.all(
-    config.relations.map(async (r) => {
-      // Forward: this node is the source
-      const forwardResults = await fireQuery(client, {
-        returnNode: nodeNameByType[r.destination] || "node",
-        conditions: [
+    const buildSelections = (triples: readonly (readonly [string, string, string])[], uid: string) => {
+      if (triples.some((triple) => triple.some((value) => /context/i.test(value)))) {
+        return [
           {
-            source: nodeNameByType[r.destination] || "node",
-            relation: r.complement,
-            target: targetUid,
-            uid: "rel-fwd",
-            type: "clause",
+            uid: `${uid}-context`,
+            label: "context",
+            text: `node:${uid}-Context`,
           },
-        ],
-        selections: [],
-      });
-
-      if (forwardResults.length > 0) {
-        results.push({
-          relation: r.label,
-          direction: "forward",
-          results: forwardResults.filter((n) => n.uid !== targetUid),
-        });
+        ];
       }
 
-      // Complement: this node is the destination
-      const complementResults = await fireQuery(client, {
-        returnNode: nodeNameByType[r.source] || "node",
-        conditions: [
+      if (triples.some((triple) => triple.some((value) => /anchor/i.test(value)))) {
+        return [
           {
-            source: nodeNameByType[r.source] || "node",
+            uid: `${uid}-anchor`,
+            label: "anchor",
+            text: `node:${uid}-Anchor`,
+          },
+        ];
+      }
+
+      return [];
+    };
+
+    const results: Array<{
+      relation: string;
+      direction: "forward" | "complement";
+      results: QueryResult[];
+    }> = [];
+
+    await Promise.all(
+      dedupedRelations.map(async (r) => {
+        const forwardUid = `${r.id}-forward`;
+        const forwardSelections = buildSelections(r.triples, forwardUid);
+        const forwardResults = await fireQueryDetailed(client, {
+          returnNode: nodeNameByType[r.destination] || "node",
+          conditions: [
+            {
+              source: nodeNameByType[r.destination] || "node",
+              relation: r.complement,
+              target: targetUid,
+              uid: forwardUid,
+              type: "clause",
+            },
+          ],
+          selections: forwardSelections,
+        });
+
+        const filteredForward = forwardResults.results.filter(
+          (n) => n.uid !== targetUid,
+        );
+        if (filteredForward.length > 0) {
+          results.push({
             relation: r.label,
-            target: targetUid,
-            uid: "rel-comp",
-            type: "clause",
-          },
-        ],
-        selections: [],
-      });
+            direction: "forward",
+            results: filteredForward,
+          });
+        }
 
-      if (complementResults.length > 0) {
-        results.push({
-          relation: r.complement,
-          direction: "complement",
-          results: complementResults.filter((n) => n.uid !== targetUid),
+        const complementUid = `${r.id}-complement`;
+        const complementSelections = buildSelections(r.triples, complementUid);
+        const complementResults = await fireQueryDetailed(client, {
+          returnNode: nodeNameByType[r.source] || "node",
+          conditions: [
+            {
+              source: nodeNameByType[r.source] || "node",
+              relation: r.label,
+              target: targetUid,
+              uid: complementUid,
+              type: "clause",
+            },
+          ],
+          selections: complementSelections,
         });
-      }
-    }),
-  );
-  // MODIFIED-END
 
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify(
-          {
-            uid: targetUid,
-            relation_count: results.length,
-            relations: results,
-          },
-          null,
-          2,
-        ),
-      },
-    ],
-  };
+        const filteredComplement = complementResults.results.filter(
+          (n) => n.uid !== targetUid,
+        );
+        if (filteredComplement.length > 0) {
+          results.push({
+            relation: r.complement,
+            direction: "complement",
+            results: filteredComplement,
+          });
+        }
+      }),
+    );
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              uid: targetUid,
+              relation_count: results.length,
+              relations: results,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  } finally {
+    unregister();
+  }
 };

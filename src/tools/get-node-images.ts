@@ -8,12 +8,23 @@
 
 import { z } from "zod";
 import type { RoamClient } from "@roam-research/roam-tools-core";
-import { getBasicTreeByParentUid } from "../roam.js";
+import {
+  DEFAULT_TREE_DEPTH,
+  getBasicTreeByParentUidWithMeta,
+} from "../roam.js";
 import type { TreeNode } from "../types.js";
 
 export const GetNodeImagesSchema = z.object({
   graph: z.string().optional().describe("Graph name or nickname."),
   uid: z.string().describe("The page/block UID to extract images from."),
+  max_depth: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      `Maximum child depth to fetch. Default ${DEFAULT_TREE_DEPTH}. Increase for deeply nested pages.`,
+    ),
 });
 
 export const getNodeImagesDescription =
@@ -49,8 +60,13 @@ const findAllImages = (nodes: TreeNode[]): string[] => {
 export const handleGetNodeImages = async (
   client: RoamClient,
   uid: string,
+  maxDepth = DEFAULT_TREE_DEPTH,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> => {
-  const tree = await getBasicTreeByParentUid(client, uid);
+  const { tree, truncated } = await getBasicTreeByParentUidWithMeta(
+    client,
+    uid,
+    maxDepth,
+  );
   const urls = findAllImages(tree);
 
   // Deduplicate
@@ -61,7 +77,13 @@ export const handleGetNodeImages = async (
       {
         type: "text",
         text: JSON.stringify(
-          { uid, image_count: unique.length, image_urls: unique },
+          {
+            uid,
+            image_count: unique.length,
+            image_urls: unique,
+            max_depth_used: maxDepth,
+            depth_limited: truncated,
+          },
           null,
           2,
         ),

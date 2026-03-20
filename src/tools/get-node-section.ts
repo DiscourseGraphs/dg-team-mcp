@@ -5,7 +5,10 @@
 
 import { z } from "zod";
 import type { RoamClient } from "@roam-research/roam-tools-core";
-import { getBasicTreeByParentUid } from "../roam.js";
+import {
+  DEFAULT_TREE_DEPTH,
+  getBasicTreeByParentUidWithMeta,
+} from "../roam.js";
 import type { TreeNode } from "../types.js";
 
 export const GetNodeSectionSchema = z.object({
@@ -16,6 +19,14 @@ export const GetNodeSectionSchema = z.object({
     .describe(
       "The section name to extract (e.g., 'Summary', 'Evidence', 'Lab Notes'). " +
       "Matches case-insensitively. Handles Roam attribute syntax (with or without '::').",
+    ),
+  max_depth: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      `Maximum child depth to fetch. Default ${DEFAULT_TREE_DEPTH}. Increase for deeply nested pages.`,
     ),
 });
 
@@ -63,8 +74,13 @@ export const handleGetNodeSection = async (
   client: RoamClient,
   uid: string,
   section: string,
+  maxDepth = DEFAULT_TREE_DEPTH,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> => {
-  const tree = await getBasicTreeByParentUid(client, uid);
+  const { tree, truncated } = await getBasicTreeByParentUidWithMeta(
+    client,
+    uid,
+    maxDepth,
+  );
 
   if (section === "*") {
     // Return all top-level sections with their content
@@ -73,9 +89,25 @@ export const handleGetNodeSection = async (
       uid: node.uid,
       content: flattenTree(node.children),
       children_count: node.children.length,
+      max_depth_used: maxDepth,
+      depth_limited: truncated,
     }));
     return {
-      content: [{ type: "text", text: JSON.stringify({ uid, sections }, null, 2) }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              uid,
+              max_depth_used: maxDepth,
+              depth_limited: truncated,
+              sections,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
     };
   }
 
@@ -93,6 +125,8 @@ export const handleGetNodeSection = async (
               uid,
               error: `Section "${section}" not found`,
               available_sections: available,
+              max_depth_used: maxDepth,
+              depth_limited: truncated,
             },
             null,
             2,
@@ -113,6 +147,8 @@ export const handleGetNodeSection = async (
             section_uid: sectionNode.uid,
             content: flattenTree(sectionNode.children),
             children_count: sectionNode.children.length,
+            max_depth_used: maxDepth,
+            depth_limited: truncated,
           },
           null,
           2,

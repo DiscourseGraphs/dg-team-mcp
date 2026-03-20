@@ -6,7 +6,11 @@
 
 import { z } from "zod";
 import type { RoamClient } from "@roam-research/roam-tools-core";
-import { getBasicTreeByParentUid, getPageEditTime } from "../roam.js";
+import {
+  DEFAULT_TREE_DEPTH,
+  getBasicTreeByParentUidWithMeta,
+  getPageEditTime,
+} from "../roam.js";
 import { getDiscourseNodeTypes } from "../discourse-config.js";
 import getDiscourseNodeFormatExpression from "../format-expression.js";
 import type { TreeNode } from "../types.js";
@@ -21,6 +25,14 @@ export const IndexPilotPagesSchema = z.object({
     .number()
     .optional()
     .describe("Starting position in the pilot list. Default 0. Increment by batch_size to continue."),
+  max_depth: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      `Maximum child depth to fetch for each pilot page. Default ${DEFAULT_TREE_DEPTH}.`,
+    ),
 });
 
 export const indexPilotPagesDescription =
@@ -57,6 +69,7 @@ export const handleIndexPilotPages = async (
   client: RoamClient,
   batchSize = 5,
   offset = 0,
+  maxDepth = DEFAULT_TREE_DEPTH,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> => {
   // 1. Discover all pilot pages
   const config = await getDiscourseNodeTypes(client);
@@ -158,8 +171,8 @@ export const handleIndexPilotPages = async (
   // 3. Extract each pilot in this batch
   const pilots = await Promise.all(
     batch.map(async (pilot) => {
-      const [tree, editTime] = await Promise.all([
-        getBasicTreeByParentUid(client, pilot.uid),
+      const [{ tree, truncated }, editTime] = await Promise.all([
+        getBasicTreeByParentUidWithMeta(client, pilot.uid, maxDepth),
         getPageEditTime(client, pilot.uid),
       ]);
 
@@ -180,6 +193,8 @@ export const handleIndexPilotPages = async (
         uid: pilot.uid,
         page_edit_time: editTime,
         total_blocks: totalBlocks,
+        max_depth_used: maxDepth,
+        depth_limited: truncated,
         sections,
       };
     }),
@@ -198,8 +213,11 @@ export const handleIndexPilotPages = async (
             total_batches: Math.ceil(totalPilots / batchSize),
             offset,
             batch_size: batchSize,
+            max_depth_used: maxDepth,
             total_pilots: totalPilots,
             pilots_in_batch: pilots.length,
+            truncated_pilot_count: pilots.filter((pilot) => pilot.depth_limited)
+              .length,
             has_more: hasMore,
             next_offset: hasMore ? nextOffset : undefined,
             pilots,

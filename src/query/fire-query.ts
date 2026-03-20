@@ -1,9 +1,7 @@
 // MODIFIED from apps/roam/src/utils/fireQuery.ts
-// — Replaced window.roamAlphaAPI.data.backend.q() with datalogQuery()
-// — Removed predefinedSelections (complex browser deps for result formatting)
-// — Simplified to return basic text/uid results
-// — Removed development logging, nanoid dependency
-// — Removed local/async query distinction (MCP always uses backend.q)
+// — Uses tuple-only queries for Local API compatibility
+// — Supports a read-only subset of query-builder selections
+// — Surfaces unsupported selections instead of silently dropping them
 
 import type { RoamClient } from "@roam-research/roam-tools-core";
 import conditionToDatalog from "./condition-to-datalog.js";
@@ -12,10 +10,9 @@ import type {
   DatalogAndClause,
   Condition,
   Selection,
-  PullBlock,
   Result as QueryResult,
 } from "./types.js";
-import compileDatalog from "./compile-datalog.js";
+import compileDatalog, { toVar } from "./compile-datalog.js";
 import gatherDatalogVariablesFromClause from "./gather-variables.js";
 import { DEFAULT_RETURN_NODE } from "./parse-query.js";
 import { datalogQuery } from "../roam.js";
@@ -32,33 +29,519 @@ export type FireQueryArgs = QueryArgs & {
   customNode?: string;
 };
 
-// COPY-START from fireQuery.ts:43-66
-const firstVariable = (
-  clause: DatalogClause | DatalogAndClause,
-): string | undefined => {
-  if (
-    clause.type === "data-pattern" ||
-    clause.type === "fn-expr" ||
-    clause.type === "pred-expr" ||
-    clause.type === "rule-expr"
-  ) {
-    return [...clause.arguments].find((v) => v.type === "variable")?.value;
-  } else if (
-    clause.type === "not-clause" ||
-    clause.type === "or-clause" ||
-    clause.type === "and-clause"
-  ) {
-    return firstVariable(clause.clauses[0]);
-  } else if (
-    clause.type === "not-join-clause" ||
-    clause.type === "or-join-clause"
-  ) {
-    return clause.variables[0]?.value;
-  }
-  return undefined;
+export type FireQueryDetailedResult = {
+  results: QueryResult[];
+  unsupportedSelections: string[];
 };
 
-// COPY-END
+type QueryProjection = {
+  findVariables: string[];
+  whereClauses: DatalogClause[];
+  apply: (row: unknown[], startIndex: number, result: QueryResult) => number;
+};
+
+const CREATE_DATE_TEST = /^\s*created?\s*(date|time|since)\s*$/i;
+const EDIT_DATE_TEST = /^\s*edit(?:ed)?\s*(date|time|since)\s*$/i;
+const CREATE_BY_TEST = /^\s*(author|create(d)?\s*by)\s*$/i;
+const EDIT_BY_TEST = /^\s*(last\s*)?edit(ed)?\s*by\s*$/i;
+const NODE_TEST = /^node:(\s*[^:]+\s*)(:.*)?$/i;
+const UID_TEST = /^\s*uid\s*$/i;
+
+const formatRelativeTime = (timestamp: number): string => {
+  const diffMs = Date.now() - timestamp;
+  const diffSeconds = Math.max(0, Math.floor(diffMs / 1000));
+  if (diffSeconds < 60) return `${diffSeconds}s ago`;
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  const diffWeeks = Math.floor(diffDays / 7);
+  if (diffWeeks < 5) return `${diffWeeks}w ago`;
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths < 12) return `${diffMonths}mo ago`;
+  return `${Math.floor(diffDays / 365)}y ago`;
+};
+
+const formatTimestampForSelection = (
+  selectionText: string,
+  timestamp: number,
+): string => {
+  if (!timestamp) return "";
+  const date = new Date(timestamp);
+  if (/since/i.test(selectionText)) return formatRelativeTime(timestamp);
+  if (/time/i.test(selectionText)) {
+    return `${date.getHours().toString().padStart(2, "0")}:${date
+      .getMinutes()
+      .toString()
+      .padStart(2, "0")}`;
+  }
+  return date.toISOString();
+};
+
+const buildBaseProjection = (entityVar: string): QueryProjection => {
+  const uidVar = `${entityVar}__uid`;
+  const titleVar = `${entityVar}__title`;
+  const stringVar = `${entityVar}__string`;
+
+  return {
+    findVariables: [uidVar, titleVar, stringVar],
+    whereClauses: [
+      {
+        type: "data-pattern",
+        arguments: [
+          { type: "variable", value: entityVar },
+          { type: "constant", value: ":block/uid" },
+          { type: "variable", value: uidVar },
+        ],
+      },
+      {
+        type: "fn-expr",
+        fn: "get-else",
+        arguments: [
+          { type: "constant", value: "$" },
+          { type: "variable", value: entityVar },
+          { type: "constant", value: ":node/title" },
+          { type: "constant", value: '""' },
+        ],
+        binding: {
+          type: "bind-scalar",
+          variable: { type: "variable", value: titleVar },
+        },
+      },
+      {
+        type: "fn-expr",
+        fn: "get-else",
+        arguments: [
+          { type: "constant", value: "$" },
+          { type: "variable", value: entityVar },
+          { type: "constant", value: ":block/string" },
+          { type: "constant", value: '""' },
+        ],
+        binding: {
+          type: "bind-scalar",
+          variable: { type: "variable", value: stringVar },
+        },
+      },
+    ],
+    apply: (row, startIndex, result) => {
+      const uid = String(row[startIndex] ?? "");
+      const title = String(row[startIndex + 1] ?? "");
+      const text = String(row[startIndex + 2] ?? "");
+      result.uid = uid;
+      result.text = title || text;
+      return 3;
+    },
+  };
+};
+
+const buildNodeProjection = ({
+  entityVar,
+  label,
+  prefix,
+}: {
+  entityVar: string;
+  label: string;
+  prefix: string;
+}): QueryProjection => {
+  const uidVar = `${prefix}__uid`;
+  const titleVar = `${prefix}__title`;
+  const stringVar = `${prefix}__string`;
+
+  return {
+    findVariables: [uidVar, titleVar, stringVar],
+    whereClauses: [
+      {
+        type: "data-pattern",
+        arguments: [
+          { type: "variable", value: entityVar },
+          { type: "constant", value: ":block/uid" },
+          { type: "variable", value: uidVar },
+        ],
+      },
+      {
+        type: "fn-expr",
+        fn: "get-else",
+        arguments: [
+          { type: "constant", value: "$" },
+          { type: "variable", value: entityVar },
+          { type: "constant", value: ":node/title" },
+          { type: "constant", value: '""' },
+        ],
+        binding: {
+          type: "bind-scalar",
+          variable: { type: "variable", value: titleVar },
+        },
+      },
+      {
+        type: "fn-expr",
+        fn: "get-else",
+        arguments: [
+          { type: "constant", value: "$" },
+          { type: "variable", value: entityVar },
+          { type: "constant", value: ":block/string" },
+          { type: "constant", value: '""' },
+        ],
+        binding: {
+          type: "bind-scalar",
+          variable: { type: "variable", value: stringVar },
+        },
+      },
+    ],
+    apply: (row, startIndex, result) => {
+      const uid = String(row[startIndex] ?? "");
+      const title = String(row[startIndex + 1] ?? "");
+      const text = String(row[startIndex + 2] ?? "");
+      result[label] = title || text;
+      result[`${label}-uid`] = uid;
+      return 3;
+    },
+  };
+};
+
+const buildTimestampProjection = ({
+  entityVar,
+  label,
+  prefix,
+  selectionText,
+  kind,
+}: {
+  entityVar: string;
+  label: string;
+  prefix: string;
+  selectionText: string;
+  kind: "create" | "edit";
+}): QueryProjection => {
+  const createVar = `${prefix}__create_time`;
+  const valueVar = `${prefix}__${kind}_time`;
+
+  return {
+    findVariables: kind === "edit" ? [createVar, valueVar] : [valueVar],
+    whereClauses:
+      kind === "edit"
+        ? [
+            {
+              type: "fn-expr",
+              fn: "get-else",
+              arguments: [
+                { type: "constant", value: "$" },
+                { type: "variable", value: entityVar },
+                { type: "constant", value: ":create/time" },
+                { type: "constant", value: "0" },
+              ],
+              binding: {
+                type: "bind-scalar",
+                variable: { type: "variable", value: createVar },
+              },
+            },
+            {
+              type: "fn-expr",
+              fn: "get-else",
+              arguments: [
+                { type: "constant", value: "$" },
+                { type: "variable", value: entityVar },
+                { type: "constant", value: ":edit/time" },
+                { type: "variable", value: createVar },
+              ],
+              binding: {
+                type: "bind-scalar",
+                variable: { type: "variable", value: valueVar },
+              },
+            },
+          ]
+        : [
+            {
+              type: "fn-expr",
+              fn: "get-else",
+              arguments: [
+                { type: "constant", value: "$" },
+                { type: "variable", value: entityVar },
+                { type: "constant", value: ":create/time" },
+                { type: "constant", value: "0" },
+              ],
+              binding: {
+                type: "bind-scalar",
+                variable: { type: "variable", value: valueVar },
+              },
+            },
+          ],
+    apply: (row, startIndex, result) => {
+      const rawValue =
+        kind === "edit" ? row[startIndex + 1] : row[startIndex];
+      const timestamp = Number(rawValue ?? 0);
+      result[label] = formatTimestampForSelection(selectionText, timestamp);
+      result[`${label}-ts`] = timestamp;
+      return kind === "edit" ? 2 : 1;
+    },
+  };
+};
+
+const buildUserProjection = ({
+  entityVar,
+  label,
+  prefix,
+  kind,
+}: {
+  entityVar: string;
+  label: string;
+  prefix: string;
+  kind: "create" | "edit";
+}): QueryProjection => {
+  const createUserVar = `${prefix}__create_user`;
+  const userVar = `${prefix}__${kind}_user`;
+  const nameVar = `${prefix}__${kind}_user_name`;
+
+  return {
+    findVariables: [nameVar],
+    whereClauses:
+      kind === "edit"
+        ? [
+            {
+              type: "fn-expr",
+              fn: "get-else",
+              arguments: [
+                { type: "constant", value: "$" },
+                { type: "variable", value: entityVar },
+                { type: "constant", value: ":create/user" },
+                { type: "constant", value: "0" },
+              ],
+              binding: {
+                type: "bind-scalar",
+                variable: { type: "variable", value: createUserVar },
+              },
+            },
+            {
+              type: "fn-expr",
+              fn: "get-else",
+              arguments: [
+                { type: "constant", value: "$" },
+                { type: "variable", value: entityVar },
+                { type: "constant", value: ":edit/user" },
+                { type: "variable", value: createUserVar },
+              ],
+              binding: {
+                type: "bind-scalar",
+                variable: { type: "variable", value: userVar },
+              },
+            },
+            {
+              type: "fn-expr",
+              fn: "get-else",
+              arguments: [
+                { type: "constant", value: "$" },
+                { type: "variable", value: userVar },
+                { type: "constant", value: ":user/display-name" },
+                { type: "constant", value: '"Anonymous User"' },
+              ],
+              binding: {
+                type: "bind-scalar",
+                variable: { type: "variable", value: nameVar },
+              },
+            },
+          ]
+        : [
+            {
+              type: "fn-expr",
+              fn: "get-else",
+              arguments: [
+                { type: "constant", value: "$" },
+                { type: "variable", value: entityVar },
+                { type: "constant", value: ":create/user" },
+                { type: "constant", value: "0" },
+              ],
+              binding: {
+                type: "bind-scalar",
+                variable: { type: "variable", value: userVar },
+              },
+            },
+            {
+              type: "fn-expr",
+              fn: "get-else",
+              arguments: [
+                { type: "constant", value: "$" },
+                { type: "variable", value: userVar },
+                { type: "constant", value: ":user/display-name" },
+                { type: "constant", value: '"Anonymous User"' },
+              ],
+              binding: {
+                type: "bind-scalar",
+                variable: { type: "variable", value: nameVar },
+              },
+            },
+          ],
+    apply: (row, startIndex, result) => {
+      result[label] = String(row[startIndex] ?? "");
+      return 1;
+    },
+  };
+};
+
+const buildSelectionProjections = ({
+  selections,
+  returnNode,
+  whereClauses,
+}: {
+  selections: Selection[];
+  returnNode: string;
+  whereClauses: DatalogClause[];
+}) => {
+  const availableVariables = new Set(
+    whereClauses.flatMap((clause) =>
+      Array.from(gatherDatalogVariablesFromClause(clause)),
+    ),
+  );
+  availableVariables.add(returnNode);
+
+  const projections: QueryProjection[] = [];
+  const unsupportedSelections: string[] = [];
+
+  selections.forEach((selection) => {
+    const selectionText = selection.text.trim();
+    const label = selection.label || selection.text;
+    const prefix = `${selection.uid || label}`;
+
+    if (/^node$/i.test(selectionText)) return;
+
+    if (UID_TEST.test(selectionText)) {
+      projections.push({
+        findVariables: [],
+        whereClauses: [],
+        apply: (_row, _startIndex, result) => {
+          result[label] = result.uid;
+          return 0;
+        },
+      });
+      return;
+    }
+
+    if (CREATE_DATE_TEST.test(selectionText)) {
+      projections.push(
+        buildTimestampProjection({
+          entityVar: returnNode,
+          label,
+          prefix,
+          selectionText,
+          kind: "create",
+        }),
+      );
+      return;
+    }
+
+    if (EDIT_DATE_TEST.test(selectionText)) {
+      projections.push(
+        buildTimestampProjection({
+          entityVar: returnNode,
+          label,
+          prefix,
+          selectionText,
+          kind: "edit",
+        }),
+      );
+      return;
+    }
+
+    if (CREATE_BY_TEST.test(selectionText)) {
+      projections.push(
+        buildUserProjection({
+          entityVar: returnNode,
+          label,
+          prefix,
+          kind: "create",
+        }),
+      );
+      return;
+    }
+
+    if (EDIT_BY_TEST.test(selectionText)) {
+      projections.push(
+        buildUserProjection({
+          entityVar: returnNode,
+          label,
+          prefix,
+          kind: "edit",
+        }),
+      );
+      return;
+    }
+
+    const nodeMatch = NODE_TEST.exec(selectionText);
+    if (nodeMatch) {
+      const variable = nodeMatch[1].trim();
+      const suffix = (nodeMatch[2] || "").replace(/^:/, "").trim();
+
+      if (!availableVariables.has(variable)) {
+        unsupportedSelections.push(selection.text);
+        return;
+      }
+
+      if (!suffix) {
+        projections.push(
+          buildNodeProjection({
+            entityVar: variable,
+            label,
+            prefix,
+          }),
+        );
+        return;
+      }
+
+      if (CREATE_DATE_TEST.test(suffix)) {
+        projections.push(
+          buildTimestampProjection({
+            entityVar: variable,
+            label,
+            prefix,
+            selectionText: suffix,
+            kind: "create",
+          }),
+        );
+        return;
+      }
+
+      if (EDIT_DATE_TEST.test(suffix)) {
+        projections.push(
+          buildTimestampProjection({
+            entityVar: variable,
+            label,
+            prefix,
+            selectionText: suffix,
+            kind: "edit",
+          }),
+        );
+        return;
+      }
+
+      if (CREATE_BY_TEST.test(suffix)) {
+        projections.push(
+          buildUserProjection({
+            entityVar: variable,
+            label,
+            prefix,
+            kind: "create",
+          }),
+        );
+        return;
+      }
+
+      if (EDIT_BY_TEST.test(suffix)) {
+        projections.push(
+          buildUserProjection({
+            entityVar: variable,
+            label,
+            prefix,
+            kind: "edit",
+          }),
+        );
+        return;
+      }
+    }
+
+    unsupportedSelections.push(selection.text);
+  });
+
+  return { projections, unsupportedSelections };
+};
 
 // COPY-START from fireQuery.ts:68-173 (query optimizer, unchanged)
 const optimizeQuery = (
@@ -165,10 +648,8 @@ const optimizeQuery = (
   }
   return orderedClauses;
 };
-
 // COPY-END
 
-// COPY-START from fireQuery.ts:175-189
 export const getWhereClauses = ({
   conditions,
   returnNode = DEFAULT_RETURN_NODE,
@@ -186,17 +667,12 @@ export const getWhereClauses = ({
 };
 
 const getConditionTargets = (conditions: Condition[]): string[] =>
-  conditions.flatMap((c) =>
-    c.type === "clause" || c.type === "not"
-      ? [c.target]
-      : getConditionTargets(c.conditions.flat()),
+  conditions.flatMap((condition) =>
+    condition.type === "clause" || condition.type === "not"
+      ? [condition.target]
+      : getConditionTargets(condition.conditions.flat()),
   );
 
-// COPY-END
-
-// MODIFIED-START from fireQuery.ts:198-308
-// — Simplified selections: only pull text/title/uid for return node
-// — Removed predefinedSelections (too many browser deps)
 export const getDatalogQuery = ({
   conditions,
   selections,
@@ -204,70 +680,105 @@ export const getDatalogQuery = ({
   inputs = {},
 }: FireQueryArgs) => {
   const expectedInputs = getConditionTargets(conditions)
-    .filter((c) => /^:in /.test(c))
-    .map((c) => c.substring(4))
-    .filter((c) => !!inputs[c])
+    .filter((target) => /^:in /.test(target))
+    .map((target) => target.substring(4))
+    .filter((target) => typeof inputs[target] !== "undefined")
     .filter((value, index, array) => array.indexOf(value) === index);
 
+  const initialWhereClauses = getWhereClauses({ conditions, returnNode });
+  const { projections, unsupportedSelections } = buildSelectionProjections({
+    selections,
+    returnNode,
+    whereClauses: initialWhereClauses,
+  });
+
+  const allProjections = [buildBaseProjection(returnNode), ...projections];
   const whereClauses = optimizeQuery(
-    getWhereClauses({ conditions, returnNode }),
+    initialWhereClauses.concat(
+      allProjections.flatMap((projection) => projection.whereClauses),
+    ),
     new Set([]),
   );
 
-  // Simplified selections: pull text + uid for the return node
-  const find = `(pull ?${returnNode} [:block/string :node/title :block/uid])`;
-  const where = whereClauses.map((c) => compileDatalog(c, 1)).join("\n");
+  const findVariables = allProjections.flatMap(
+    (projection) => projection.findVariables,
+  );
+  const where = whereClauses.map((clause) => compileDatalog(clause, 1)).join("\n");
 
   return {
-    query: `[:find\n  ${find}\n${
+    query: `[:find\n  ${findVariables.map((value) => `?${toVar(value)}`).join("\n  ")}\n${
       expectedInputs.length
-        ? `  :in $ ${expectedInputs.map((i) => `?${i}`).join(" ")}\n`
+        ? `  :in $ ${expectedInputs.map((value) => `?${toVar(value)}`).join(" ")}\n`
         : ""
     }:where\n${
       whereClauses.length === 1 && whereClauses[0].type === "not-clause"
         ? `[?node :block/uid _]`
         : ""
     }${where}\n]`,
-    inputs: expectedInputs.map((i) => inputs[i]),
+    inputs: expectedInputs.map((value) => inputs[value]),
+    unsupportedSelections,
+    formatResult: (row: unknown[]): QueryResult => {
+      const result = { text: "", uid: "" } as QueryResult;
+      let offset = 0;
+      allProjections.forEach((projection) => {
+        offset += projection.apply(row, offset, result);
+      });
+      return result;
+    },
   };
 };
 
-// MODIFIED-END
+export const fireQueryDetailed = async (
+  client: RoamClient,
+  args: FireQueryArgs,
+): Promise<FireQueryDetailedResult> => {
+  const { isCustomEnabled, customNode, ...rest } = args;
 
-// MODIFIED-START from fireQuery.ts:318-375
-// — Uses datalogQuery() instead of window.roamAlphaAPI
-// — Returns simplified QueryResult (text + uid)
+  if (isCustomEnabled) {
+    try {
+      const rows = await datalogQuery<unknown[]>(client, customNode as string);
+      return {
+        unsupportedSelections: [],
+        results: rows.map((row) => {
+          const cells = Array.isArray(row) ? row : [row];
+          return {
+            text: "",
+            uid: "",
+            ...Object.fromEntries(
+              cells.map((value, index) => [index.toString(), value as string | number]),
+            ),
+          };
+        }),
+      };
+    } catch (error) {
+      console.error("Query error:", (error as Error).message);
+      return { results: [], unsupportedSelections: [] };
+    }
+  }
+
+  const { query, inputs, unsupportedSelections, formatResult } =
+    getDatalogQuery(rest);
+
+  try {
+    const rows = await datalogQuery<unknown[]>(client, query, ...inputs);
+    return {
+      unsupportedSelections,
+      results: rows
+        .filter((row) => Array.isArray(row))
+        .map((row) => formatResult(row)),
+    };
+  } catch (error) {
+    console.error("Query error:", (error as Error).message);
+    return { results: [], unsupportedSelections };
+  }
+};
+
 const fireQuery = async (
   client: RoamClient,
   args: FireQueryArgs,
 ): Promise<QueryResult[]> => {
-  const { isCustomEnabled, customNode, ...rest } = args;
-
-  const { query, inputs } = isCustomEnabled
-    ? { query: customNode as string, inputs: [] as unknown[] }
-    : getDatalogQuery(rest);
-
-  try {
-    const queryResults = await datalogQuery<[PullBlock]>(
-      client,
-      query,
-      ...inputs,
-    );
-
-    return queryResults
-      .filter((r) => r != null && r[0] != null)
-      .map((r) => {
-        const pull = r[0] || {};
-        return {
-          text: (pull[":node/title"] as string) || (pull[":block/string"] as string) || "",
-          uid: (pull[":block/uid"] as string) || "",
-        };
-      });
-  } catch (e) {
-    console.error("Query error:", (e as Error).message);
-    return [];
-  }
+  const detailed = await fireQueryDetailed(client, args);
+  return detailed.results;
 };
-// MODIFIED-END
 
 export default fireQuery;

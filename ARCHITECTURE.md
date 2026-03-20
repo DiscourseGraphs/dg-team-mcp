@@ -64,16 +64,17 @@ The extension code uses `window.roamAlphaAPI` (browser context). The Local API e
 | `:keys` syntax | Silently returns empty |
 | `clojure.string/lower-case` | `Unknown function` error |
 | `clojure.string/starts-with?` | Silently returns empty |
-| `clojure.string/includes?` | Untested, likely fails |
-| `re-pattern` / `re-find` in Datalog | Silently returns empty via Local API |
+| `clojure.string/includes?` | Unsafe / avoided in current implementation |
+| `re-pattern` / `re-find` in Datalog | Works |
 | `data.fast.q` action | May not be available (falls back to `data.backend.q`) |
 
 ### Our Workarounds
 1. **Page discovery:** Use `data.ai.search` instead of Datalog prefix queries
-2. **Block trees:** Recursive simple Datalog (one query per level, no `pull`)
-3. **Case-insensitive matching:** Filter in JS after fetching all results
+2. **Block trees:** Recursive simple Datalog (one query per level, no `pull`), with truncation metadata for deep trees
+3. **Text matching:** Use `re-pattern` / `re-find` in Datalog where possible, JS filtering otherwise
 4. **Page UIDs:** Use `data.ai.getPage` instead of Datalog lookups
-5. **All query results:** Use tuple format `[:find ?a ?b :where ...]`, map to objects in JS — never use `:keys`
+5. **All query results:** Use tuple format `[:find ?a ?b :where ...]`, map to objects in JS — never use `:keys` or `pull`
+6. **Discourse graph semantics:** Register discourse-specific translators from the live graph config per request
 
 ---
 
@@ -117,6 +118,8 @@ src/
     ├── gather-variables.ts           # COPY — variable extraction
     ├── condition-to-datalog.ts       # MODIFIED — conditions → Datalog clauses
     ├── parse-query.ts                # MODIFIED — block tree → conditions
+    ├── discourse-node-utils.ts       # NEW — richer node matching helpers
+    ├── register-discourse-translators.ts # NEW — dynamic DG translator registration
     └── fire-query.ts                 # MODIFIED — build + execute query
 ```
 
@@ -141,8 +144,8 @@ export const parseQuery = (...) => { ... };
 | Category | Files |
 |---|---|
 | **COPY** (exact) | `compile-datalog.ts`, `gather-variables.ts`, `format-expression.ts` |
-| **MODIFIED** (adapted for Node.js/Local API) | `condition-to-datalog.ts`, `parse-query.ts`, `fire-query.ts`, `tree-utils.ts`, `discourse-config.ts` |
-| **NEW** (original for MCP) | `index.ts`, `roam.ts`, `pilot-index.ts`, all tool files, `types.ts`, `defaults.ts` |
+| **MODIFIED** (adapted for Node.js/Local API) | `condition-to-datalog.ts`, `parse-query.ts`, `fire-query.ts`, `tree-utils.ts`, `discourse-config.ts`, `defaults.ts` |
+| **NEW** (MCP-specific glue built around extension semantics) | `index.ts`, `roam.ts`, `pilot-index.ts`, all tool files, `types.ts`, `query/discourse-node-utils.ts`, `query/register-discourse-translators.ts` |
 
 ---
 
@@ -157,7 +160,7 @@ export const parseQuery = (...) => { ... };
 ### Node Discovery
 | Tool | What | Data Source |
 |---|---|---|
-| `get_all_discourse_nodes` | All instances of a node type | Parameterized Datalog |
+| `get_all_discourse_nodes` | All instances of a node type | Tuple Datalog + embedded block-node query |
 | `search_nodes` | Keyword search across titles | Simple Datalog, JS text filter |
 | `get_node` | Full node details by UID | Datalog metadata + recursive tree |
 
@@ -165,7 +168,7 @@ export const parseQuery = (...) => { ... };
 | Tool | What | Data Source |
 |---|---|---|
 | `get_linked_nodes` | Outgoing refs + incoming backlinks | Datalog `block/refs` joins |
-| `get_relationships` | Typed discourse relations | `fireQuery` per relation |
+| `get_relationships` | Typed discourse relations | Shared DG translators + `fireQueryDetailed` |
 | `get_node_neighborhood` | K-hop BFS traversal | Repeated `block/refs` queries |
 | `get_node_images` | Image URLs from content | Recursive tree scan, regex |
 
@@ -179,7 +182,7 @@ export const parseQuery = (...) => { ... };
 ### Query Builder
 | Tool | What | Data Source |
 |---|---|---|
-| `run_discourse_query` | Execute query builder by block UID | Ported pipeline: parseQuery → conditionToDatalog → fireQuery |
+| `run_discourse_query` | Execute query builder by block UID | Ported pipeline: parseQuery → shared DG translators → conditionToDatalog → `fireQueryDetailed` |
 
 ### Pilot Analysis — User-facing
 | Tool | What | Data Source |
@@ -207,8 +210,8 @@ Most tools go through `withClient()` which handles graph resolution, client crea
 ### `datalogQuery` (roam.ts)
 Tries `data.fast.q`, falls back to `data.backend.q` on "Unknown action" error. All results get null-filtered before property access. Uses tuple format only (no `:keys`).
 
-### `getBasicTreeByParentUid` (roam.ts)
-Recursive Datalog — fetches one level of children at a time, sorts by `:block/order`, recurses up to `maxDepth=5`. This is necessary because `pull` with `{:block/children ...}` doesn't work via Local API.
+### `getBasicTreeByParentUid` / `getBasicTreeByParentUidWithMeta` (roam.ts)
+Recursive Datalog — fetches one level of children at a time, sorts by `:block/order`, recurses up to `DEFAULT_TREE_DEPTH=10` by default. `getBasicTreeByParentUidWithMeta` also returns `truncated` metadata so tools can explicitly report when a page hit the depth cap instead of silently returning partial trees.
 
 ### `getPageEditTime` (roam.ts)
 Simple Datalog query for `:edit/time` attribute. Used by indexing tools for staleness detection.
@@ -224,15 +227,22 @@ Block UID
   → getBasicTreeByParentUid (fetch block tree)
   → getSubTree("scratch") (find query config)
   → parseQuery (extract conditions + selections)
+  → getInternalDiscourseConfig + registerDiscourseTranslators (load live DG semantics)
   → conditionToDatalog (translate to Datalog clauses)
   → optimizeQuery (reorder for performance)
   → compileDatalog (AST → string)
   → datalogQuery (execute via Local API)
-  → format results (text + uid per match)
+  → map tuple rows to objects (text + uid + supported extra selections)
+  → report unsupported selections explicitly
 ```
 
 ### Supported Condition Translators
 `self`, `references`, `is referenced by`, `is referenced by block in page with title`, `is in page`, `has title` (regex, literal, input vars), `with text in title`, `has attribute`, `has child`, `has parent`, `has ancestor`, `has descendant`, `with text` (regex, literal), `created by`, `edited by`, `references title`, `has heading`, `is in page with title`, `has block reference`
+
+### Dynamic Discourse Translators
+Registered per request from the live discourse config:
+
+`is a`, `is a candidate`, `self` override, relation labels, and relation complements (`Supports`, `Supported By`, etc.)
 
 ### NOT Supported (need browser context)
 `{current}`, `{this page}`, `{current user}` targets, NLP date parsing, `created/edited after/before`, `is in canvas`
@@ -296,10 +306,12 @@ The MCP server handles data extraction and storage. Claude (the calling LLM) doe
 
 ## Known Limitations
 
-1. **Datalog via Local API is unreliable.** Many query features silently return empty. Worked around with `data.ai.*` endpoints and JS-side filtering.
+1. **Local API Datalog is still constrained.** `pull`, `:keys`, and several `clojure.string` functions are unsafe or silently fail. The implementation works around this with tuple queries, regex-based matching, and JS-side filtering.
 
-2. **Tree fetching is N+1.** `getBasicTreeByParentUid` makes one Datalog call per tree level per block. Deep pages = many API calls. The indexing architecture caches this.
+2. **Tree fetching is N+1.** `getBasicTreeByParentUid` makes one Datalog call per tree level per block. Deep pages = many API calls. The indexing architecture caches this, and tree-based tools now expose depth-limit metadata when truncation happens.
 
-3. **Query builder missing some translators.** Date conditions need chrono-node. Context-dependent targets need browser state.
+3. **Query builder is not full browser parity.** Date conditions still need chrono-node / NLP parsing, and context-dependent targets still need browser state.
 
-4. **Search uses `data.ai.search`** which has result limits and relevance ordering we can't control.
+4. **Selection support is partial by design.** `run_discourse_query` returns unsupported selections explicitly instead of silently dropping them.
+
+5. **Search uses `data.ai.search`** which has result limits and relevance ordering we can't control.

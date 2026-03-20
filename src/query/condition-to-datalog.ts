@@ -29,11 +29,60 @@ const extractRef = (ref: string): string =>
   ref?.match(/\(\(([^)]*)\)\)/)?.[1] || ref || "";
 
 const isRegex = (str: string) => /^\/.+\/(i)?$/.test(str);
+const escapeRegex = (str: string) =>
+  str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const regexRePatternValue = (str: string) => {
   const isCaseInsensitive = str.endsWith("/i");
   return isCaseInsensitive
     ? `"(?i)${str.slice(1, -2).replace(/\\/g, "\\\\")}"`
     : `"${str.slice(1, -1).replace(/\\/g, "\\\\")}"`;
+};
+
+const getTextContainsDatalog = ({
+  source,
+  target,
+  valueVariable,
+}: {
+  source: string;
+  target: string;
+  valueVariable: string;
+}): DatalogClause[] => {
+  const regexVariable = `${source}-${valueVariable}-regex`;
+  const regexTarget = isRegex(target)
+    ? regexRePatternValue(target)
+    : INPUT_REGEX.test(target)
+      ? null
+      : regexRePatternValue(`/${escapeRegex(normalizePageTitle(target))}/`);
+
+  return [
+    {
+      type: "fn-expr",
+      fn: "re-pattern",
+      arguments: [
+        INPUT_REGEX.test(target)
+          ? {
+              type: "variable",
+              value: target.replace(INPUT_REGEX, ""),
+            }
+          : {
+              type: "constant",
+              value: regexTarget || '""',
+            },
+      ],
+      binding: {
+        type: "bind-scalar",
+        variable: { type: "variable", value: regexVariable },
+      },
+    },
+    {
+      type: "pred-expr",
+      pred: "re-find",
+      arguments: [
+        { type: "variable", value: regexVariable },
+        { type: "variable", value: valueVariable },
+      ],
+    },
+  ];
 };
 
 // MODIFIED-START from conditionToDatalog.ts:getTitleDatalog (lines 45-196)
@@ -255,14 +304,11 @@ const translator: Record<string, Translator> = {
           { type: "variable", value: `${source}-Title` },
         ],
       },
-      {
-        type: "pred-expr",
-        pred: "clojure.string/includes?",
-        arguments: [
-          { type: "variable", value: `${source}-Title` },
-          { type: "constant", value: `"${normalizePageTitle(target)}"` },
-        ],
-      },
+      ...getTextContainsDatalog({
+        source,
+        target,
+        valueVariable: `${source}-Title`,
+      }),
     ],
     placeholder: "Enter any text",
   },
@@ -425,14 +471,11 @@ const translator: Record<string, Translator> = {
             },
           ],
         },
-        {
-          type: "pred-expr",
-          pred: "clojure.string/includes?",
-          arguments: [
-            { type: "variable", value: `${source}-String` },
-            { type: "constant", value: `"${normalizePageTitle(target)}"` },
-          ],
-        },
+        ...getTextContainsDatalog({
+          source,
+          target,
+          valueVariable: `${source}-String`,
+        }),
       ];
     },
     placeholder: "Enter any text",

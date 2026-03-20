@@ -1,3 +1,5 @@
+> ⚠️ **Proof of Concept** - This is a prototype implementation for exploring how discourse graphs can be integrated with AI assistants through the Model Context Protocol (MCP). It is intended for prototyping and experimental purposes only.
+
 # Discourse Graph MCP Server
 
 An AI bridge to your Roam Research graph. Ask questions about your discourse graph, explore relationships between research nodes, analyze pilot user feedback, and read/write pages and blocks — all through natural conversation with Claude.
@@ -57,6 +59,27 @@ claude mcp add -s user discourse-graph -- npx tsx /path/to/discourse-graph-mcp/s
 - **Linux:** `~/.config/Claude/claude_desktop_config.json`
 
 </details>
+
+**Codex CLI:**
+
+Use the built version for the most reliable setup:
+
+```bash
+npm run build
+codex mcp add discourse-graph -- node /path/to/discourse-graph-mcp/dist/index.js
+```
+
+If you are actively developing the server, you can also run it directly from source:
+
+```bash
+codex mcp add discourse-graph -- npx tsx /path/to/discourse-graph-mcp/src/index.ts
+```
+
+Verify it was added:
+
+```bash
+codex mcp list
+```
 
 ```json
 {
@@ -357,7 +380,7 @@ Only changed pages get re-processed.
 
 | Tool | Description |
 |------|-------------|
-| `run_discourse_query` | Execute a query builder query by block UID |
+| `run_discourse_query` | Execute a query builder query by block UID, with optional inputs and explicit reporting for unsupported selections |
 
 </details>
 
@@ -419,9 +442,10 @@ Local data:
 ## Known Limitations
 
 - **Roam Desktop must be running.** Connects to the Local API on localhost.
-- **Tree fetching is slow for large pages.** One API call per tree level per block. The knowledge index exists to do this work once.
-- **Some Datalog features don't work via Local API.** `pull`, `:keys`, `clojure.string` functions silently return empty. Worked around with alternative approaches.
-- **Query builder doesn't support date conditions** or context-dependent targets (`{current}`, `{this page}`).
+- **Tree fetching is slow for large pages.** One API call per tree level per block. The knowledge index exists to do this work once. Tree-based tools now surface depth metadata when a page hits the traversal cap.
+- **Some Datalog features don't work via Local API.** `pull`, `:keys`, and several `clojure.string` functions are unsafe or silently fail. The server works around this with tuple queries, regex-based matching, and JS-side filtering.
+- **Query builder is not full browser parity.** Date conditions and context-dependent targets (`{current}`, `{this page}`, `{current user}`) are still unsupported.
+- **Some query-builder selections are intentionally partial.** Unsupported selections are reported in the tool output instead of being silently dropped.
 
 ---
 

@@ -1,6 +1,8 @@
 import { RoamClient, resolveGraph, getPort, RoamError } from "@roam-research/roam-tools-core";
 import type { TreeNode, RoamPullBlock } from "./types.js";
 
+export const DEFAULT_TREE_DEPTH = 10;
+
 export async function createClient(graph?: string) {
   const resolved = await resolveGraph(graph);
   const port = await getPort();
@@ -78,11 +80,45 @@ function sortAndNormalize(blocks: (RoamPullBlock | null | undefined)[]): TreeNod
 export async function getBasicTreeByParentUid(
   client: RoamClient,
   uid: string,
-  maxDepth = 5,
+  maxDepth = DEFAULT_TREE_DEPTH,
 ): Promise<TreeNode[]> {
+  const result = await getBasicTreeByParentUidWithMeta(client, uid, maxDepth);
+  return result.tree;
+}
+
+const hasChildren = async (
+  client: RoamClient,
+  uid: string,
+): Promise<boolean> => {
+  const rows = await datalogQuery<[string]>(
+    client,
+    `[:find ?childUid
+      :where
+      [?parent :block/uid "${uid}"]
+      [?parent :block/children ?child]
+      [?child :block/uid ?childUid]]`,
+  );
+  return rows.length > 0;
+};
+
+export async function getBasicTreeByParentUidWithMeta(
+  client: RoamClient,
+  uid: string,
+  maxDepth = DEFAULT_TREE_DEPTH,
+): Promise<{
+  tree: TreeNode[];
+  truncated: boolean;
+  maxDepth: number;
+}> {
   // Use simple Datalog with tuple bindings (no pull, no :keys — both silently fail via Local API).
   // Recursively fetch children level by level.
-  if (maxDepth <= 0) return [];
+  if (maxDepth <= 0) {
+    return {
+      tree: [],
+      truncated: await hasChildren(client, uid),
+      maxDepth,
+    };
+  }
 
   const children = await datalogQuery<[string, string, number]>(
     client,
@@ -101,15 +137,27 @@ export async function getBasicTreeByParentUid(
     .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
   // Recursively fetch children for each block
-  const nodes: TreeNode[] = await Promise.all(
-    sorted.map(async (child) => ({
-      uid: child.uid,
-      text: child.text,
-      children: await getBasicTreeByParentUid(client, child.uid, maxDepth - 1),
-    })),
+  const nodes = await Promise.all(
+    sorted.map(async (child) => {
+      const subtree = await getBasicTreeByParentUidWithMeta(
+        client,
+        child.uid,
+        maxDepth - 1,
+      );
+      return {
+        uid: child.uid,
+        text: child.text,
+        children: subtree.tree,
+        truncated: subtree.truncated,
+      };
+    }),
   );
 
-  return nodes;
+  return {
+    tree: nodes.map(({ truncated: _truncated, ...node }) => node),
+    truncated: nodes.some((node) => node.truncated),
+    maxDepth,
+  };
 }
 
 export async function getPageEditTime(

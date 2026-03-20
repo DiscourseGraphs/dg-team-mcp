@@ -1,5 +1,7 @@
 // Output types — what the LLM sees when calling tools
 
+import type { Condition } from "./query/types.js";
+
 export interface DiscourseNodeType {
   name: string;
   typeId: string;
@@ -12,6 +14,17 @@ export interface DiscourseNodeType {
   backedBy: "user" | "default" | "relation";
 }
 
+export interface InternalDiscourseNodeType extends DiscourseNodeType {
+  specification: Condition[];
+  template: TreeNode[];
+  embeddingRef?: string;
+  embeddingRefUid?: string;
+  isFirstChild?: {
+    uid: string;
+    value: boolean;
+  };
+}
+
 export interface DiscourseRelationType {
   id: string;
   label: string;
@@ -20,10 +33,22 @@ export interface DiscourseRelationType {
   complement: string;
 }
 
+export type RelationTriple = readonly [string, string, string];
+
+export interface InternalDiscourseRelationType extends DiscourseRelationType {
+  triples: RelationTriple[];
+}
+
 export interface GetDiscourseNodeTypesResult {
   configured: boolean;
   nodes: DiscourseNodeType[];
   relations: DiscourseRelationType[];
+}
+
+export interface InternalDiscourseConfigResult {
+  configured: boolean;
+  nodes: InternalDiscourseNodeType[];
+  relations: InternalDiscourseRelationType[];
 }
 
 // Internal types — Roam block tree representation

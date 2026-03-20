@@ -1,6 +1,6 @@
 // MODIFIED from:
 // - apps/roam/src/utils/refreshConfigTree.ts (data fetching — replaced window.roamAlphaAPI with RoamClient)
-// - apps/roam/src/utils/getDiscourseNodes.ts lines 105-177 (node parsing — parameterized, removed spec/template/suggestive fields)
+// - apps/roam/src/utils/getDiscourseNodes.ts lines 105-177 (node parsing — parameterized)
 // - apps/roam/src/utils/getDiscourseRelations.ts lines 34-61 (relation parsing — parameterized, takes tree instead of global ref)
 
 import type { RoamClient } from "@roam-research/roam-tools-core";
@@ -8,6 +8,9 @@ import type {
   DiscourseNodeType,
   DiscourseRelationType,
   GetDiscourseNodeTypesResult,
+  InternalDiscourseConfigResult,
+  InternalDiscourseNodeType,
+  InternalDiscourseRelationType,
   TreeNode,
 } from "./types.js";
 import {
@@ -16,16 +19,15 @@ import {
   getNodePages,
 } from "./roam.js";
 import { getSettingValueFromTree, getSubTree, toFlexRegex } from "./tree-utils.js";
+import { roamNodeToCondition } from "./query/parse-query.js";
 import { DEFAULT_NODES, DEFAULT_RELATIONS } from "./defaults.js";
-
-interface ParsedRelation extends DiscourseRelationType {
-  triples: readonly [string, string, string][];
-}
 
 // MODIFIED-START from getDiscourseRelations.ts:34-61
 // — takes configTree param instead of reading from discourseConfigRef global
 // — returns DEFAULT_RELATIONS when no user config found
-const parseRelations = (configTree: TreeNode[]): ParsedRelation[] => {
+const parseRelations = (
+  configTree: TreeNode[],
+): InternalDiscourseRelationType[] => {
   const grammarNode = configTree.find((n) =>
     toFlexRegex("grammar").test(n.text),
   );
@@ -34,9 +36,7 @@ const parseRelations = (configTree: TreeNode[]): ParsedRelation[] => {
   );
 
   if (!relationsNode?.children.length) {
-    // No user-configured relations — return defaults (without triples since we
-    // only extracted metadata; relation-backed nodes won't be generated from defaults)
-    return DEFAULT_RELATIONS.map((r) => ({ ...r, triples: [] }));
+    return DEFAULT_RELATIONS.map((r) => ({ ...r, triples: [...r.triples] }));
   }
 
   return relationsNode.children.flatMap((r, i) => {
@@ -69,37 +69,62 @@ const parseRelations = (configTree: TreeNode[]): ParsedRelation[] => {
 };
 // MODIFIED-END
 
+const getSpecification = (children: TreeNode[]): ReturnType<typeof roamNodeToCondition>[] => {
+  const specificationNode = getSubTree(children, "specification");
+  const scratchNode = getSubTree(specificationNode.children, "scratch");
+  const conditionsNode = getSubTree(scratchNode.children, "conditions");
+  return conditionsNode.children.map(roamNodeToCondition);
+};
+
+const getUidAndBooleanSetting = (tree: TreeNode[], text: string) => {
+  const node = tree.find((t) => t.text === text);
+  return {
+    uid: node?.uid || "",
+    value: !!node?.children?.length,
+  };
+};
+
 // MODIFIED-START from getDiscourseNodes.ts:105-177
 // — takes nodePages Map + relations as params instead of reading from discourseConfigRef
-// — removed specification, template, embeddingRef, isFirstChild fields (internal to extension)
 const parseNodes = (
   nodePages: Map<string, { text: string; children: TreeNode[] }>,
-  relations: ParsedRelation[],
-): DiscourseNodeType[] => {
-  // User-configured nodes from "discourse-graph/nodes/*" pages
-  // COPY from getDiscourseNodes.ts:106-143 (settings extraction pattern)
-  const configuredNodes: DiscourseNodeType[] = Array.from(
+  relations: InternalDiscourseRelationType[],
+): InternalDiscourseNodeType[] => {
+  const configuredNodes: InternalDiscourseNodeType[] = Array.from(
     nodePages.entries(),
-  ).map(([typeId, { text, children }]) => ({
-    name: text,
-    typeId,
-    format: getSettingValueFromTree(children, "format"),
-    shortcut: getSettingValueFromTree(children, "shortcut"),
-    tag: getSettingValueFromTree(children, "tag"),
-    description: getSettingValueFromTree(children, "description"),
-    // COPY from getDiscourseNodes.ts:125-128 — full canvas settings map
-    canvasSettings: Object.fromEntries(
-      getSubTree(children, "canvas").children.map(
-        (c) => [c.text, c.children[0]?.text ?? ""] as const,
-      ),
-    ),
-    graphOverview: children.some((c) => c.text === "Graph Overview"),
-    backedBy: "user" as const,
-  }));
+  ).map(([typeId, { text, children }]) => {
+    const suggestiveRules = getSubTree(children, "Suggestive Rules");
+    const embeddingBlockRef = getSubTree(
+      suggestiveRules.children,
+      "Embedding Block Ref",
+    );
 
-  // Relation-backed nodes (those with "anchor" in triples)
-  // From getDiscourseNodes.ts:145-171
-  const relationNodes: DiscourseNodeType[] = relations
+    return {
+      name: text,
+      typeId,
+      format: getSettingValueFromTree(children, "format"),
+      shortcut: getSettingValueFromTree(children, "shortcut"),
+      tag: getSettingValueFromTree(children, "tag"),
+      description: getSettingValueFromTree(children, "description"),
+      canvasSettings: Object.fromEntries(
+        getSubTree(children, "canvas").children.map(
+          (c) => [c.text, c.children[0]?.text ?? ""] as const,
+        ),
+      ),
+      graphOverview: children.some((c) => c.text === "Graph Overview"),
+      backedBy: "user" as const,
+      specification: getSpecification(children),
+      template: getSubTree(children, "template").children,
+      embeddingRef: embeddingBlockRef.children[0]?.text,
+      embeddingRefUid: embeddingBlockRef.uid,
+      isFirstChild: getUidAndBooleanSetting(
+        suggestiveRules.children,
+        "First Child",
+      ),
+    };
+  });
+
+  const relationNodes: InternalDiscourseNodeType[] = relations
     .filter((r) =>
       r.triples.some((t) => t.some((n) => /anchor/i.test(n))),
     )
@@ -113,6 +138,21 @@ const parseNodes = (
       canvasSettings: {},
       graphOverview: false,
       backedBy: "relation" as const,
+      specification: r.triples.map(([source, relation, target], index) => ({
+        type: "clause" as const,
+        source: /anchor/i.test(source) ? r.label : source,
+        relation,
+        target:
+          target === "source"
+            ? r.source
+            : target === "destination"
+              ? r.destination
+              : /anchor/i.test(target)
+                ? r.label
+                : target,
+        uid: `${r.id}-relation-spec-${index}`,
+      })),
+      template: [],
     }));
 
   const allConfigured = configuredNodes.concat(relationNodes);
@@ -125,30 +165,56 @@ const parseNodes = (
 };
 // MODIFIED-END
 
-export const getDiscourseNodeTypes = async (
-  client: RoamClient,
-): Promise<GetDiscourseNodeTypesResult> => {
-  // 1. Fetch node type pages (same as refreshConfigTree.ts:27-37)
-  const nodePages = await getNodePages(client);
+const toPublicNodeType = ({
+  specification: _specification,
+  template: _template,
+  embeddingRef: _embeddingRef,
+  embeddingRefUid: _embeddingRefUid,
+  isFirstChild: _isFirstChild,
+  ...node
+}: InternalDiscourseNodeType): DiscourseNodeType => node;
 
-  // 2. Fetch config page tree for relations
+const dedupeRelations = (
+  relations: InternalDiscourseRelationType[],
+): DiscourseRelationType[] => {
+  const seen = new Set<string>();
+  return relations
+    .map(({ triples: _triples, ...relation }) => relation)
+    .filter((relation) => {
+      const key = [
+        relation.id,
+        relation.label,
+        relation.source,
+        relation.destination,
+        relation.complement,
+      ].join("::");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+
+export const getInternalDiscourseConfig = async (
+  client: RoamClient,
+): Promise<InternalDiscourseConfigResult> => {
+  const nodePages = await getNodePages(client);
   const configUid = await getConfigPageUid(client);
   const configTree = configUid
     ? await getBasicTreeByParentUid(client, configUid)
     : [];
-
-  // 3. Parse relations from grammar > relations subtree
   const parsedRelations = parseRelations(configTree);
-
-  // 4. Parse nodes from node pages + relation-backed nodes + defaults
   const nodes = parseNodes(nodePages, parsedRelations);
-
-  // 5. Return output (strip triples from relations — internal detail)
-  const relations = parsedRelations.map(
-    ({ triples, ...rest }) => rest,
-  );
-
   const configured = configUid !== undefined && nodePages.size > 0;
+  return { configured, nodes, relations: parsedRelations };
+};
 
-  return { configured, nodes, relations };
+export const getDiscourseNodeTypes = async (
+  client: RoamClient,
+): Promise<GetDiscourseNodeTypesResult> => {
+  const internal = await getInternalDiscourseConfig(client);
+  return {
+    configured: internal.configured,
+    nodes: internal.nodes.map(toPublicNodeType),
+    relations: dedupeRelations(internal.relations),
+  };
 };

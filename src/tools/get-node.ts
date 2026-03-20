@@ -7,12 +7,24 @@
 
 import { z } from "zod";
 import type { RoamClient } from "@roam-research/roam-tools-core";
-import { datalogQuery, getBasicTreeByParentUid } from "../roam.js";
+import {
+  DEFAULT_TREE_DEPTH,
+  datalogQuery,
+  getBasicTreeByParentUidWithMeta,
+} from "../roam.js";
 import type { TreeNode } from "../types.js";
 
 export const GetNodeSchema = z.object({
   graph: z.string().optional().describe("Graph name or nickname."),
   uid: z.string().describe("The block/page UID to fetch."),
+  max_depth: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      `Maximum child depth to fetch. Default ${DEFAULT_TREE_DEPTH}. Increase for deeply nested pages.`,
+    ),
 });
 
 export const getNodeDescription =
@@ -32,6 +44,7 @@ type NodeMetadataTuple = [string, number, number, string, string];
 export const handleGetNode = async (
   client: RoamClient,
   uid: string,
+  maxDepth = DEFAULT_TREE_DEPTH,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> => {
   // Get metadata (title, timestamps, creator)
   const metaQuery = `[:find ?title ?created ?modified ?author-uid ?author-name
@@ -54,7 +67,11 @@ export const handleGetNode = async (
   const meta = metadata[0];
 
   // Get full block tree
-  const children = await getBasicTreeByParentUid(client, uid);
+  const { tree: children, truncated } = await getBasicTreeByParentUidWithMeta(
+    client,
+    uid,
+    maxDepth,
+  );
 
   // Flatten tree to text for a readable summary
   const flattenTree = (nodes: TreeNode[], depth = 0): string =>
@@ -71,6 +88,8 @@ export const handleGetNode = async (
     author_uid: meta?.author_uid,
     content: flattenTree(children),
     children_count: children.length,
+    max_depth_used: maxDepth,
+    depth_limited: truncated,
   };
   // MODIFIED-END
 

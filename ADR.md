@@ -69,20 +69,21 @@ This MCP server vertically integrates the Roam graph into Claude — giving an A
 - `:keys field1 field2` → silently returns empty
 - `clojure.string/lower-case` → `Unknown function` error
 - `clojure.string/starts-with?` → silently returns empty
-- `re-pattern` / `re-find` → silently returns empty
+- `re-pattern` / `re-find` → works
 - Simple `[:find ?a ?b :where ...]` → works reliably
 - `get-else`, `:in` params, numeric comparisons → work
 
-**Decision:** Use only simple tuple-format Datalog. Do all filtering, transformation, and matching in JavaScript.
+**Decision:** Use tuple-format Datalog as the baseline. Avoid `pull`, `:keys`, and `clojure.string.*`. Do object mapping and unsupported-result handling in JavaScript, and use regex-based Datalog where the Local API supports it.
 
 **Workarounds:**
 1. Page discovery → `data.ai.search` instead of Datalog prefix queries
 2. Block trees → recursive Datalog, one level at a time (ADR-005)
-3. Case-insensitive matching → JS `.toLowerCase().includes()`
+3. Text matching → regex in Datalog when possible, JS filtering otherwise
 4. Page UID lookup → `data.ai.getPage`
 5. All query results → tuple format, `.map(([a, b]) => ({ a, b }))` in JS
+6. Query-builder selections → support a safe subset and report unsupported selections explicitly
 
-**Why this matters for future work:** If someone tries to "optimize" by using `:keys`, `pull`, or `clojure.string` — it will silently break. The failures are silent (empty results, no errors), making them extremely hard to debug.
+**Why this matters for future work:** If someone tries to "optimize" by using `:keys`, `pull`, or `clojure.string` — it will silently break. The failures are silent (empty results, no errors), making them extremely hard to debug. Regex-based Datalog is okay; `clojure.string`-based matching is not.
 
 ---
 
@@ -93,9 +94,9 @@ This MCP server vertically integrates the Roam graph into Claude — giving an A
 
 **Context:** The extension fetches a block tree in one call using `(pull ?c [{:block/children ...}])`. This doesn't work via the Local API (ADR-004). `data.ai.getBlock` returns markdown, not structured data.
 
-**Decision:** Fetch block trees with recursive simple Datalog — one query per tree level, recurse for each child. Capped at `maxDepth=5`.
+**Decision:** Fetch block trees with recursive simple Datalog — one query per tree level, recurse for each child. Default cap is `maxDepth=10`, with tool-level overrides where needed and explicit truncation reporting when the cap is hit.
 
-**Why:** Simple tuple Datalog is the only reliable query format. For config pages (2-3 levels, ~20 blocks), overhead is minimal. For large pilot pages, the indexing architecture (ADR-008) caches the result.
+**Why:** Simple tuple Datalog is the only reliable query format. A deeper default favors correctness and trust over small performance gains, while explicit truncation metadata prevents partial tree results from looking complete.
 
 **Trade-off:** A page with 100 blocks across 4 levels = ~100 Datalog calls. This is the primary performance bottleneck and the reason the indexing architecture exists.
 
@@ -111,6 +112,7 @@ This MCP server vertically integrates the Roam graph into Claude — giving an A
 **Decision:** Three-category approach:
 - **COPY** pure logic files: `compileDatalog.ts`, `gatherDatalogVariablesFromClause.ts`
 - **MODIFY** files with browser deps: `conditionToDatalog.ts`, `parseQuery.ts`, `fireQuery.ts`
+- **ADD MCP glue** for discourse semantics: shared translator registration from live config, richer node/relation config parsing, and tuple-result mapping
 - **SKIP** translators needing browser context: `{current}`, `{this page}`, `{current user}`, NLP dates, canvas membership
 
 **Annotation convention:** Every function has `COPY-START`/`COPY-END` or `MODIFIED-START`/`MODIFIED-END` with source file path and line numbers.

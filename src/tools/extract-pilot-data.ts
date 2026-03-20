@@ -5,7 +5,11 @@
 
 import { z } from "zod";
 import type { RoamClient } from "@roam-research/roam-tools-core";
-import { getBasicTreeByParentUid, getPageEditTime } from "../roam.js";
+import {
+  DEFAULT_TREE_DEPTH,
+  getBasicTreeByParentUidWithMeta,
+  getPageEditTime,
+} from "../roam.js";
 import { getDiscourseNodeTypes } from "../discourse-config.js";
 import getDiscourseNodeFormatExpression from "../format-expression.js";
 import type { TreeNode } from "../types.js";
@@ -18,6 +22,14 @@ export const ExtractPilotDataSchema = z.object({
     .describe(
       "Specific pilot page UIDs to extract. Recommended: 3-5 per batch to fit " +
       "in context window. Call get_pilot_users first to discover all pilot UIDs.",
+    ),
+  max_depth: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      `Maximum child depth to fetch for each pilot page. Default ${DEFAULT_TREE_DEPTH}.`,
     ),
 });
 
@@ -52,6 +64,7 @@ function countBlocks(nodes: TreeNode[]): number {
 export const handleExtractPilotData = async (
   client: RoamClient,
   pilotUids?: string[],
+  maxDepth = DEFAULT_TREE_DEPTH,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> => {
   // 1. Discover pilot pages
   const config = await getDiscourseNodeTypes(client);
@@ -122,8 +135,8 @@ export const handleExtractPilotData = async (
   // 2. Extract each pilot's tree + edit time
   const pilots = await Promise.all(
     targetPilots.map(async (pilot) => {
-      const [tree, editTime] = await Promise.all([
-        getBasicTreeByParentUid(client, pilot.uid),
+      const [{ tree, truncated }, editTime] = await Promise.all([
+        getBasicTreeByParentUidWithMeta(client, pilot.uid, maxDepth),
         getPageEditTime(client, pilot.uid),
       ]);
 
@@ -145,6 +158,8 @@ export const handleExtractPilotData = async (
         uid: pilot.uid,
         page_edit_time: editTime,
         total_blocks: totalBlocks,
+        max_depth_used: maxDepth,
+        depth_limited: truncated,
         sections,
       };
     }),
@@ -156,6 +171,9 @@ export const handleExtractPilotData = async (
       text: JSON.stringify({
         extracted_count: pilots.length,
         total_pilots_available: allPilots.length,
+        max_depth_used: maxDepth,
+        truncated_pilot_count: pilots.filter((pilot) => pilot.depth_limited)
+          .length,
         pilots,
       }, null, 2),
     }],

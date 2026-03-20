@@ -6,7 +6,11 @@
 
 import { z } from "zod";
 import type { RoamClient } from "@roam-research/roam-tools-core";
-import { datalogQuery, getBasicTreeByParentUid } from "../roam.js";
+import {
+  DEFAULT_TREE_DEPTH,
+  datalogQuery,
+  getBasicTreeByParentUidWithMeta,
+} from "../roam.js";
 import { getDiscourseNodeTypes } from "../discourse-config.js";
 import getDiscourseNodeFormatExpression from "../format-expression.js";
 import type { TreeNode } from "../types.js";
@@ -20,6 +24,14 @@ export const GetPilotSupportSchema = z.object({
     .array(z.string())
     .optional()
     .describe("Additional search terms or synonyms beyond the feature name."),
+  max_depth: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe(
+      `Maximum child depth to fetch for each pilot page. Default ${DEFAULT_TREE_DEPTH}.`,
+    ),
 });
 
 export const getPilotSupportDescription =
@@ -140,6 +152,7 @@ export const handleGetPilotSupport = async (
   client: RoamClient,
   feature: string,
   searchTerms?: string[],
+  maxDepth = DEFAULT_TREE_DEPTH,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> => {
   // Build search terms
   const featureLower = feature.toLowerCase();
@@ -239,18 +252,30 @@ export const handleGetPilotSupport = async (
   type TangentialResult = {
     pilot: string;
     page_uid: string;
+    blocks_scanned: number;
     mentions: TangentialMention[];
   };
   const implicitResults: ImplicitResult[] = [];
   const tangentialResults: TangentialResult[] = [];
-  const notFound: Array<{ pilot: string; page_uid: string; blocks_scanned: number }> = [];
+  const notFound: Array<{
+    pilot: string;
+    page_uid: string;
+    blocks_scanned: number;
+    depth_limited: boolean;
+  }> = [];
   let totalBlocksScanned = 0;
+  let truncatedPilotCount = 0;
 
   await Promise.all(
     pilots.map(async (pilot) => {
-      const tree = await getBasicTreeByParentUid(client, pilot.uid);
+      const { tree, truncated } = await getBasicTreeByParentUidWithMeta(
+        client,
+        pilot.uid,
+        maxDepth,
+      );
       const scanned = countBlocks(tree);
       totalBlocksScanned += scanned;
+      if (truncated) truncatedPilotCount += 1;
 
       const { implicit, tangential } = classifyBlocks(
         tree,
@@ -274,12 +299,18 @@ export const handleGetPilotSupport = async (
         tangentialResults.push({
           pilot: pilot.title,
           page_uid: pilot.uid,
+          blocks_scanned: scanned,
           mentions: tangential,
         });
       }
 
       if (!hasExplicit && implicit.length === 0 && tangential.length === 0) {
-        notFound.push({ pilot: pilot.title, page_uid: pilot.uid, blocks_scanned: scanned });
+        notFound.push({
+          pilot: pilot.title,
+          page_uid: pilot.uid,
+          blocks_scanned: scanned,
+          depth_limited: truncated,
+        });
       }
     }),
   );
@@ -295,6 +326,8 @@ export const handleGetPilotSupport = async (
             search_method: "layered — wikilinks → exact/all-words+sentiment → any-word",
             pilots_searched: pilots.length,
             total_blocks_scanned: totalBlocksScanned,
+            max_depth_used: maxDepth,
+            truncated_pilot_count: truncatedPilotCount,
 
             explicit: {
               description: "Wikilink [[Feature]] references — strongest signal",
