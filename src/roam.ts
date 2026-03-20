@@ -3,6 +3,8 @@ import type { TreeNode, RoamPullBlock } from "./types.js";
 
 export const DEFAULT_TREE_DEPTH = 10;
 
+let preferredDatalogAction: "data.fast.q" | "data.backend.q" | undefined;
+
 export async function createClient(graph?: string) {
   const resolved = await resolveGraph(graph);
   const port = await getPort();
@@ -20,17 +22,24 @@ export async function datalogQuery<T = unknown>(
   query: string,
   ...inputs: unknown[]
 ): Promise<T[]> {
-  // TODO: Determine which Datalog action the Roam Local API supports.
-  // data.fast.q is synchronous/in-memory, data.backend.q is async/server-side.
-  // Try fast.q first; if unsupported, fall back. Once confirmed, remove fallback.
+  if (preferredDatalogAction) {
+    const response = await client.call<T[]>(preferredDatalogAction, [
+      query,
+      ...inputs,
+    ]);
+    return response.result ?? [];
+  }
+
   try {
     const response = await client.call<T[]>("data.fast.q", [query, ...inputs]);
+    preferredDatalogAction = "data.fast.q";
     return response.result ?? [];
   } catch (error) {
     if (
       error instanceof RoamError &&
       error.message.includes("Unknown action")
     ) {
+      preferredDatalogAction = "data.backend.q";
       const response = await client.call<T[]>("data.backend.q", [query, ...inputs]);
       return response.result ?? [];
     }

@@ -73,12 +73,21 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
+type ToolContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string };
+
+type ToolResult = {
+  content: ToolContent[];
+  isError?: boolean;
+};
+
 const withClient = (
   handler: (
     client: import("@roam-research/roam-tools-core").RoamClient,
     nickname: string,
     args: Record<string, unknown>,
-  ) => Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }>,
+  ) => Promise<ToolResult>,
 ) => {
   return async (args: Record<string, unknown>) => {
     try {
@@ -88,8 +97,13 @@ const withClient = (
       const result = await handler(client, nickname, args);
 
       const first = result.content[0];
-      if (first && !result.isError) {
+      if (first && !result.isError && first.type === "text") {
         first.text = `Roam graph: ${nickname}\n\n${first.text}`;
+      } else if (!result.isError) {
+        result.content.unshift({
+          type: "text",
+          text: `Roam graph: ${nickname}`,
+        });
       }
 
       return result;
@@ -147,7 +161,13 @@ server.tool("get_all_discourse_nodes", getAllDiscourseNodesDescription,
 server.tool("run_discourse_query", runQueryDescription,
   RunQuerySchema.shape,
   withClient(async (client, _n, args) =>
-    handleRunQuery(client, args.query_uid as string),
+    handleRunQuery(
+      client,
+      args.query_uid as string,
+      typeof args.inputs === "object" && args.inputs !== null
+        ? (args.inputs as Record<string, string | number>)
+        : undefined,
+    ),
   ),
 );
 
@@ -168,7 +188,11 @@ server.tool("search_nodes", searchNodesDescription,
 server.tool("get_node", getNodeDescription,
   GetNodeSchema.shape,
   withClient(async (client, _n, args) =>
-    handleGetNode(client, args.uid as string),
+    handleGetNode(
+      client,
+      args.uid as string,
+      typeof args.max_depth === "number" ? args.max_depth : undefined,
+    ),
   ),
 );
 
@@ -196,7 +220,14 @@ server.tool("get_relationships", getRelationshipsDescription,
 server.tool("get_node_images", getNodeImagesDescription,
   GetNodeImagesSchema.shape,
   withClient(async (client, _n, args) =>
-    handleGetNodeImages(client, args.uid as string),
+    handleGetNodeImages(
+      client,
+      args.uid as string,
+      typeof args.max_depth === "number" ? args.max_depth : undefined,
+      args.include_image_content === true,
+      typeof args.image_limit === "number" ? args.image_limit : undefined,
+      typeof args.max_image_bytes === "number" ? args.max_image_bytes : undefined,
+    ),
   ),
 );
 
@@ -230,7 +261,12 @@ server.tool("get_researcher_contributions", getResearcherContributionsDescriptio
 server.tool("get_node_section", getNodeSectionDescription,
   GetNodeSectionSchema.shape,
   withClient(async (client, _n, args) =>
-    handleGetNodeSection(client, args.uid as string, args.section as string),
+    handleGetNodeSection(
+      client,
+      args.uid as string,
+      args.section as string,
+      typeof args.max_depth === "number" ? args.max_depth : undefined,
+    ),
   ),
 );
 
@@ -268,6 +304,7 @@ server.tool("search_pilots_live", getPilotSupportDescription,
       client,
       args.feature as string,
       Array.isArray(args.search_terms) ? args.search_terms as string[] : undefined,
+      typeof args.max_depth === "number" ? args.max_depth : undefined,
     ),
   ),
 );
@@ -280,6 +317,7 @@ server.tool("index_pilot_pages", indexPilotPagesDescription,
       client,
       typeof args.batch_size === "number" ? args.batch_size : undefined,
       typeof args.offset === "number" ? args.offset : undefined,
+      typeof args.max_depth === "number" ? args.max_depth : undefined,
     ),
   ),
 );
@@ -328,6 +366,7 @@ server.tool("extract_pilot_data", extractPilotDataDescription,
     handleExtractPilotData(
       client,
       Array.isArray(args.pilot_uids) ? args.pilot_uids as string[] : undefined,
+      typeof args.max_depth === "number" ? args.max_depth : undefined,
     ),
   ),
 );
