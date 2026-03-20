@@ -27,14 +27,14 @@ type NodeMetadata = {
   author_uid: string;
   author_name: string;
 };
-type NodeMetadataTuple = [string, string, number, number, string, string];
+type NodeMetadataTuple = [string, number, number, string, string];
 
 export const handleGetNode = async (
   client: RoamClient,
   uid: string,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> => {
   // Get metadata (title, timestamps, creator)
-  const metaQuery = `[:find ?title ?uid ?created ?modified ?author-uid ?author-name
+  const metaQuery = `[:find ?title ?created ?modified ?author-uid ?author-name
     :where
     [?node :block/uid "${uid}"]
     [?node :node/title ?title]
@@ -45,10 +45,10 @@ export const handleGetNode = async (
     [(get-else $ ?user-eid :user/display-name "Anonymous User") ?author-name]
   ]`;
 
-  const rawMetadata = await datalogQuery<NodeMetadataTuple>(client, metaQuery);
+  const rawMetadata = await datalogQuery<[string, number, number, string, string]>(client, metaQuery);
   const metadata = rawMetadata
     .filter((r) => r != null)
-    .map(([title, uid, created, modified, author_uid, author_name]) => ({
+    .map(([title, created, modified, author_uid, author_name]) => ({
       title, uid, created, modified, author_uid, author_name,
     }));
   const meta = metadata[0];

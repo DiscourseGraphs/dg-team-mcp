@@ -35,14 +35,27 @@ const flattenTree = (nodes: TreeNode[], depth = 0): string =>
     )
     .join("\n");
 
+const stripMarkup = (text: string): string =>
+  text
+    .replace(/\{\{[^}]*\}\}/g, "")   // {{buttons}}, {{SmartBlocks}}
+    .replace(/#\.\S+/g, "")           // #.class tags
+    .replace(/\*\*/g, "")             // bold
+    .replace(/__/g, "")               // italic
+    .replace(/^##?\s*/, "")           // heading markers
+    .trim();
+
 const findSection = (
   tree: TreeNode[],
   sectionName: string,
 ): TreeNode | undefined => {
-  const normalizedName = sectionName.toLowerCase().replace(/::$/, "");
+  const normalizedName = sectionName.toLowerCase().replace(/::$/, "").trim();
   return tree.find((node) => {
-    const nodeText = node.text.toLowerCase().replace(/::$/, "").trim();
-    return nodeText === normalizedName || nodeText.startsWith(normalizedName + "::");
+    const nodeText = stripMarkup(node.text).toLowerCase().replace(/::$/, "").trim();
+    return (
+      nodeText === normalizedName ||
+      nodeText.startsWith(normalizedName + "::") ||
+      nodeText.startsWith(normalizedName + " ")
+    );
   });
 };
 
