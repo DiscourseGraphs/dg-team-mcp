@@ -2,7 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { getMcpConfig, RoamError, tools as roamTools, routeToolCall } from "@roam-research/roam-tools-core";
+import { getMcpConfig, RoamClient, RoamError, tools as roamTools, routeToolCall } from "@roam-research/roam-tools-core";
 import { createClient } from "./roam.js";
 import {
   GetNodeTypesSchema, getNodeTypesDescription, handleGetNodeTypes,
@@ -82,9 +82,56 @@ type ToolResult = {
   isError?: boolean;
 };
 
+// ── Auto-loaded graph guidelines ──
+// Fetched once per graph on first tool call, prepended to the response.
+
+const guidelinesSent = new Set<string>();
+
+// Mirrors response from data.ai.getGraphGuidelines (not exported by roam-tools-core)
+type GuidelinesResponse = {
+  guidelines: string | null;
+  starredPages?: string[];
+  todaysDailyNotePage?: string;
+  aiUserDisplayName?: string;
+  humanUserDisplayName?: string;
+  accessLevel?: string;
+};
+
+async function getGuidelinesOnce(
+  graph: string | undefined,
+): Promise<string | null> {
+  const { client, nickname } = await createClient(graph);
+  if (guidelinesSent.has(nickname)) return null;
+  guidelinesSent.add(nickname);
+
+  const response = await client.call<GuidelinesResponse>(
+    "data.ai.getGraphGuidelines",
+    [],
+  );
+  const r = response.result;
+  if (!r?.guidelines) return null;
+
+  let text = `──── Graph guidelines auto-loaded ────\n`;
+  text += `The following guidelines were fetched from the graph and will not be repeated on subsequent tool calls.\n\n`;
+  text += r.guidelines;
+  const meta: string[] = [];
+  if (r.starredPages?.length)
+    meta.push(`Starred pages: ${r.starredPages.join(", ")}`);
+  if (r.todaysDailyNotePage)
+    meta.push(`Today's daily note: ${r.todaysDailyNotePage}`);
+  if (r.humanUserDisplayName)
+    meta.push(`User: ${r.humanUserDisplayName}`);
+  if (r.accessLevel)
+    meta.push(`Access level: ${r.accessLevel}`);
+  if (meta.length) text += `\n\n${meta.join("\n")}`;
+  text += `\n──── End of graph guidelines ────`;
+
+  return text;
+}
+
 const withClient = (
   handler: (
-    client: import("@roam-research/roam-tools-core").RoamClient,
+    client: RoamClient,
     nickname: string,
     args: Record<string, unknown>,
   ) => Promise<ToolResult>,
@@ -96,13 +143,20 @@ const withClient = (
       const { client, nickname } = await createClient(graph);
       const result = await handler(client, nickname, args);
 
+      let guidelines: string | null = null;
+      try { guidelines = await getGuidelinesOnce(graph); } catch { /* best-effort */ }
+
       const first = result.content[0];
       if (first && !result.isError && first.type === "text") {
-        first.text = `Roam graph: ${nickname}\n\n${first.text}`;
+        let prefix = `Roam graph: ${nickname}`;
+        if (guidelines) prefix += `\n\n${guidelines}\n\n---`;
+        first.text = `${prefix}\n\n${first.text}`;
       } else if (!result.isError) {
+        let headerText = `Roam graph: ${nickname}`;
+        if (guidelines) headerText += `\n\n${guidelines}\n\n---`;
         result.content.unshift({
           type: "text",
-          text: `Roam graph: ${nickname}`,
+          text: headerText,
         });
       }
 
@@ -129,7 +183,37 @@ for (const tool of roamTools) {
     inputSchema: tool.schema,
   }, async (args) => {
     try {
-      return await routeToolCall(tool.name, args);
+      const result = await routeToolCall(tool.name, args);
+      const graph = typeof args.graph === "string" ? args.graph : undefined;
+
+      // get_graph_guidelines already returns the data — just mark as sent
+      if (tool.name === "get_graph_guidelines") {
+        try {
+          const { nickname } = await createClient(graph);
+          guidelinesSent.add(nickname);
+        } catch { /* ignore */ }
+        return result;
+      }
+
+      // Auto-load guidelines on first tool call for this graph.
+      // Standalone tools (list_graphs, setup_new_graph) have no graph — createClient fails harmlessly.
+      try {
+        const guidelines = await getGuidelinesOnce(graph);
+
+        if (guidelines && !result.isError) {
+          const first = result.content?.[0];
+          if (first?.type === "text") {
+            first.text = `${guidelines}\n\n---\n\n${first.text}`;
+          } else {
+            result.content = [
+              { type: "text" as const, text: guidelines },
+              ...(result.content || []),
+            ];
+          }
+        }
+      } catch { /* best-effort */ }
+
+      return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return {
