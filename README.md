@@ -46,8 +46,10 @@ npm install
 **Claude Code:**
 
 ```bash
-claude mcp add -s user discourse-graph -- npx tsx /path/to/discourse-graph-mcp/src/index.ts
+claude mcp add -s user discourse-graph -- /path/to/discourse-graph-mcp/node_modules/.bin/tsx /path/to/discourse-graph-mcp/src/index.ts
 ```
+
+> **Why the absolute path?** Using `npx tsx` is cwd-sensitive — it fails when Claude Code is opened in a project that doesn't have `tsx` installed locally.
 
 **Claude Desktop** — add to your MCP config:
 
@@ -72,7 +74,7 @@ codex mcp add discourse-graph -- node /path/to/discourse-graph-mcp/dist/index.js
 If you are actively developing the server, you can also run it directly from source:
 
 ```bash
-codex mcp add discourse-graph -- npx tsx /path/to/discourse-graph-mcp/src/index.ts
+codex mcp add discourse-graph -- /path/to/discourse-graph-mcp/node_modules/.bin/tsx /path/to/discourse-graph-mcp/src/index.ts
 ```
 
 Verify it was added:
