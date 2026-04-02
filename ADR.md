@@ -272,3 +272,21 @@ Internal tools are registered (Claude needs them) but documented separately.
 3. Returns both views together
 
 `skip_live_search=true` for index-only instant mode.
+
+---
+
+## ADR-017: Roam-Native Multi-Batch Write Approval
+
+**Date:** 2026-04-02
+**Status:** Accepted
+
+**Context:** The original write visibility showed pending writes in the terminal (Claude Code). Users couldn't see WHERE in their graph the write would land. Terminal approval was disorienting.
+
+**Decision:** Move approval from terminal to Roam. Render virtual DOM blocks inline at the target parent. Support multiple simultaneous proposals to different parents. Track resolution (approved/rejected) so agents can poll for the outcome.
+
+**Why:**
+- Users need visual context of where blocks will land
+- Multi-agent workflows produce writes to different parents simultaneously
+- Fire-and-forget proposals break the feedback loop
+
+**Trade-offs:** Requires Roam plugin installed. Plugin polls bridge every 1.2s (lightweight). Resolution tracking is in-memory (lost on server restart).

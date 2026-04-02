@@ -67,11 +67,31 @@ import {
 import {
   IndexPilotPagesSchema, indexPilotPagesDescription, handleIndexPilotPages,
 } from "./tools/index-pilot-pages.js";
+import {
+  ClearPendingWriteBatchSchema,
+  GetPendingWriteBatchSchema,
+  ProposeWriteBatchSchema,
+  ProposeWriteSchema,
+  clearPendingWriteBatchDescription,
+  getPendingWriteBatchDescription,
+  handleClearPendingWriteBatch,
+  handleGetPendingWriteBatch,
+  handleProposeWrite,
+  handleProposeWriteBatch,
+  proposeWriteBatchDescription,
+  proposeWriteDescription,
+} from "./tools/proposed-writes.js";
+import { startWriteVisibilityBridge } from "./write-visibility.js";
 
 const server = new McpServer({
   name: "discourse-graph-mcp",
   version: "0.1.0",
 });
+
+const CREATE_BLOCK_PREFERENCE_NOTE =
+  "Direct graph mutation. For append-only child blocks where you want " +
+  "Roam-side target visibility first, prefer propose_write_batch " +
+  "(or propose_write for a single branch).";
 
 type ToolContent =
   | { type: "text"; text: string }
@@ -179,7 +199,10 @@ const withClient = (
 // ── Roam base tools (re-exported from @roam-research/roam-tools-core) ──
 for (const tool of roamTools) {
   server.registerTool(tool.name, {
-    description: tool.description,
+    description:
+      tool.name === "create_block"
+        ? `${tool.description}\n\nPreference: ${CREATE_BLOCK_PREFERENCE_NOTE}`
+        : tool.description,
     inputSchema: tool.schema,
   }, async (args) => {
     try {
@@ -470,6 +493,73 @@ server.tool("save_pilot_index", savePilotIndexDescription,
   },
 );
 
+// ── Buffered write-visibility tools ──
+
+server.tool("propose_write_batch", proposeWriteBatchDescription,
+  ProposeWriteBatchSchema.shape,
+  async (args) => {
+    try {
+      const graph =
+        typeof args.graph === "string" ? args.graph : undefined;
+      const { nickname } = await createClient(graph);
+
+      return handleProposeWriteBatch({
+        graph,
+        graphNickname: nickname,
+        parentUid: args.parentUid as string,
+        writes: args.writes as Array<{ label?: string; markdown: string }>,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text" as const, text: message }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool("propose_write", proposeWriteDescription,
+  ProposeWriteSchema.shape,
+  async (args) => {
+    try {
+      const graph =
+        typeof args.graph === "string" ? args.graph : undefined;
+      const { nickname } = await createClient(graph);
+
+      return handleProposeWrite({
+        graph,
+        graphNickname: nickname,
+        parentUid: args.parentUid as string,
+        markdown: args.markdown as string,
+        label: typeof args.label === "string" ? args.label : undefined,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        content: [{ type: "text" as const, text: message }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool("get_pending_write_batch", getPendingWriteBatchDescription,
+  GetPendingWriteBatchSchema.shape,
+  async (args) =>
+    handleGetPendingWriteBatch({
+      batchId: typeof args.batchId === "string" ? args.batchId : undefined,
+    }),
+);
+
+server.tool("clear_pending_write_batch", clearPendingWriteBatchDescription,
+  ClearPendingWriteBatchSchema.shape,
+  async (args) =>
+    handleClearPendingWriteBatch({
+      batchId: typeof args.batchId === "string" ? args.batchId : undefined,
+    }),
+);
+
 async function main() {
   try {
     await getMcpConfig();
@@ -480,6 +570,7 @@ async function main() {
     }
   }
 
+  startWriteVisibilityBridge();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Discourse Graph MCP server running");

@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A standalone MCP server that gives AI assistants full access to a live Roam Research graph with Discourse Graph support. 44 tools total: 23 Roam base tools (re-exported from `@roam-research/roam-tools-core`) + 21 Discourse Graph tools covering node types, relations, query builder, pilot analysis, and a knowledge indexing pipeline.
+A standalone MCP server that gives AI assistants full access to a live Roam Research graph with Discourse Graph support. 48 tools total: 23 Roam base tools (re-exported from `@roam-research/roam-tools-core`) + 21 Discourse Graph tools + 4 buffered write-visibility tools for multi-batch Roam-native write approval.
 
 **Runtime:** Node.js + TypeScript (ESM), runs as a subprocess of Claude Code/Desktop
 **Transport:** stdio (JSON-RPC 2.0)
@@ -13,6 +13,25 @@ A standalone MCP server that gives AI assistants full access to a live Roam Rese
 ## Architecture
 
 ```
+Agent Session              MCP Server (Node.js)            Roam Plugin (browser)
+─────────────             ──────────────────────          ──────────────────────
+propose_write() ────▶     pendingBatches Map              polls GET /current
+                          (accumulates multiple)           every 1.2s
+                                                           │
+get_pending_             HTTP Bridge :3597                 resolves each batch
+write_batch() ◀───       GET  /current → all batches      (lookup parent in graph,
+                         POST /clear   → resolve           parse markdown → tree)
+                                                           │
+                         recentResolutions Map             renders virtual DOM blocks
+                         (stores approved/rejected)        at each parent's location
+                                                           │
+                                                          [Approve] / [Reject]
+                                                           per batch
+                                                           │
+                                                          POST /clear
+                                                          {batchId, resolution}
+
+
 Claude (any MCP client)
     |
     | stdio (JSON-RPC 2.0)
@@ -20,13 +39,16 @@ Claude (any MCP client)
 discourse-graph-mcp
     |-- 23 Roam base tools (re-exported from roam-tools-core)
     |-- 21 Discourse Graph tools
+    |-- 4 buffered write-visibility tools
     |-- Knowledge index (~/.discourse-graph-mcp/pilot-index.json)
+    |-- Write-visibility bridge (127.0.0.1:3597)
     |
     | HTTP to 127.0.0.1:{port}
     v
-Roam Desktop Local API
-    v
-Roam Graph (live data)
+Roam Desktop Local API        Roam Plugin (apps/roam/)
+    v                              |
+Roam Graph (live data)             polls bridge, renders virtual blocks,
+                                   approve/reject per batch
 ```
 
 ### Dependencies
@@ -39,6 +61,22 @@ Reuses roam-mcp's auth. User runs `roam-mcp connect` once → token stored in `~
 
 ### Roam Base Tool Re-export
 The server imports `tools` and `routeToolCall` from `@roam-research/roam-tools-core` and registers all 23 Roam tools on our server. This means users only need one MCP server — no separate `@roam-research/roam-mcp` install.
+
+### Buffered Write Visibility (Multi-Batch, Roam-Native Approval)
+The server exposes four tools for a Roam-native write approval workflow:
+- `propose_write_batch` — buffer a same-parent append batch. Multiple batches to different parents can coexist simultaneously.
+- `propose_write` — convenience wrapper for a single branch (creates a one-branch batch).
+- `get_pending_write_batch` — check status of a batch by ID. Returns `{status: "pending"}` while waiting, or `{status: "resolved", resolution: "approved"|"rejected"}` after the user acts in Roam.
+- `clear_pending_write_batch` — manually clear a batch (rarely needed; Roam plugin handles resolution).
+
+**Architecture:** Proposals accumulate in an in-memory `pendingBatches` Map. The write-visibility HTTP bridge (`127.0.0.1:3597`) serves them to the Roam plugin, which polls `GET /write-visibility/current` every 1.2s. The plugin renders virtual DOM blocks inline at each parent's location with approve/reject buttons per batch. When the user approves or rejects, the plugin sends `POST /write-visibility/clear` with `{batchId, resolution}`. The server stores the resolution in a `recentResolutions` Map so agents can poll via `get_pending_write_batch`.
+
+**Bridge endpoints:**
+- `GET /write-visibility/current` — all pending batches (or 204 if none)
+- `POST /write-visibility/clear` — resolve a batch: `{batchId, resolution: "approved"|"rejected"}`
+- `GET /write-visibility/health` — bridge status: `{ok, pendingCount, port}`
+
+These tools do not replace Roam's base write tools. Direct writes like `create_block` remain available and execute immediately. The buffered tools are the preferred path when the workflow wants Roam-side approval before the actual write.
 
 ---
 
@@ -83,6 +121,7 @@ The extension code uses `window.roamAlphaAPI` (browser context). The Local API e
 ```
 src/
 ├── index.ts                          # MCP server entry, registers all tools
+├── write-visibility.ts               # In-memory pending/resolved batch store + HTTP bridge
 ├── roam.ts                           # RoamClient wrapper, Datalog helpers, tree fetching
 ├── discourse-config.ts               # Config parsing (node types + relations)
 ├── tree-utils.ts                     # Pure utils (from roamjs-components)
@@ -111,7 +150,8 @@ src/
 │   ├── save-pilot-index.ts          # save_pilot_index (internal, used during indexing)
 │   ├── query-pilot-insights.ts      # query_pilot_insights
 │   ├── check-index-freshness.ts     # check_index_freshness
-│   └── deep-search.ts              # deep_pilot_search
+│   ├── deep-search.ts              # deep_pilot_search
+│   └── proposed-writes.ts          # propose_write*, pending batch utilities
 └── query/
     ├── types.ts                      # Datalog AST + QB types
     ├── compile-datalog.ts            # COPY — Datalog AST → string
@@ -121,6 +161,14 @@ src/
     ├── discourse-node-utils.ts       # NEW — richer node matching helpers
     ├── register-discourse-translators.ts # NEW — dynamic DG translator registration
     └── fire-query.ts                 # MODIFIED — build + execute query
+apps/roam/
+├── src/
+│   ├── index.ts                      # Roam plugin: polls bridge, renders virtual blocks, approve/reject
+│   └── styles.css                    # Virtual block + pill bar styling
+├── scripts/
+│   └── build.ts                      # Builds dist/extension.js
+└── dist/
+    └── extension.js                  # Load this in Roam Developer Tools
 ```
 
 ---
@@ -199,6 +247,14 @@ export const parseQuery = (...) => { ... };
 |---|---|---|
 | `extract_pilot_data` | Fetch specific pilot pages chunked by section | Recursive tree fetch |
 | `save_pilot_index` | Write classified data to disk | File I/O (`~/.discourse-graph-mcp/pilot-index.json`) |
+
+### Buffered Write Visibility (4)
+| Tool | What | Data Source |
+|---|---|---|
+| `propose_write_batch` | Buffer a same-parent append batch; multiple batches coexist | In-memory pendingBatches Map |
+| `propose_write` | Convenience wrapper: single branch → one-branch batch | In-memory pendingBatches Map |
+| `get_pending_write_batch` | Poll batch status: pending, or resolved (approved/rejected) | In-memory pendingBatches + recentResolutions Maps |
+| `clear_pending_write_batch` | Manually clear a batch (plugin handles this normally) | In-memory pendingBatches Map |
 
 ---
 

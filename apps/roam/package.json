@@ -1,0 +1,11 @@
+{
+  "name": "dg-team-mcp-roam",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Roam write target locator for dg-team-mcp",
+  "type": "module",
+  "scripts": {
+    "build": "tsx scripts/build.ts",
+    "dev": "tsx scripts/dev.ts"
+  }
+}

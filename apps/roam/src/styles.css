@@ -1,0 +1,244 @@
+:root {
+  --dg-pending-bg: rgba(46, 160, 67, 0.08);
+  --dg-pending-border: #2da44e;
+  --dg-approve-bg: rgba(45, 164, 78, 0.1);
+  --dg-approve-hover: rgba(45, 164, 78, 0.2);
+  --dg-approve-color: #1a7f37;
+  --dg-reject-bg: rgba(219, 55, 55, 0.08);
+  --dg-reject-hover: rgba(219, 55, 55, 0.15);
+  --dg-reject-color: #cf222e;
+}
+
+/* ── Pill: bottom-right action bar ── */
+
+#dg-mcp-write-pill {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 100;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: none;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.75);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: #f0f0f0;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  font-family: inherit;
+  user-select: none;
+  transition: box-shadow 120ms;
+}
+
+#dg-mcp-write-pill:hover {
+  box-shadow: 0 3px 14px rgba(0, 0, 0, 0.35);
+}
+
+#dg-mcp-write-pill[hidden] {
+  display: none;
+}
+
+.dg-mcp-pill-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: 2px;
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  padding-left: 6px;
+}
+
+.dg-mcp-pill-nav-btn {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 1px 3px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 10px;
+  line-height: 1;
+  font-family: inherit;
+}
+
+.dg-mcp-pill-nav-btn:hover {
+  color: #fff;
+}
+
+.dg-mcp-pill-bulk {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  padding-left: 6px;
+}
+
+.dg-mcp-pill-bulk-btn {
+  appearance: none;
+  border: none;
+  border-radius: 4px;
+  padding: 2px 7px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 700;
+  font-family: inherit;
+  line-height: 1.3;
+  transition: background 80ms, color 80ms;
+}
+
+.dg-mcp-pill-bulk-btn--approve {
+  background: rgba(45, 164, 78, 0.25);
+  color: #7ee89b;
+}
+
+.dg-mcp-pill-bulk-btn--approve:hover {
+  background: rgba(45, 164, 78, 0.45);
+  color: #fff;
+}
+
+.dg-mcp-pill-bulk-btn--reject {
+  background: rgba(219, 55, 55, 0.2);
+  color: #f08080;
+}
+
+.dg-mcp-pill-bulk-btn--reject:hover {
+  background: rgba(219, 55, 55, 0.4);
+  color: #fff;
+}
+
+.dg-mcp-pill-bulk-btn--confirm {
+  animation: dg-mcp-pulse 0.3s ease-out;
+}
+
+@keyframes dg-mcp-pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+
+.dg-mcp-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2da44e;
+  box-shadow: 0 0 4px rgba(45, 164, 78, 0.6);
+}
+
+/* ── Pending blocks container (inserted at append point) ── */
+
+.dg-mcp-pending-container {
+  margin: 6px 0 2px 0;
+  border-left: 3px solid var(--dg-pending-border);
+  border-radius: 0 4px 4px 0;
+  background: var(--dg-pending-bg);
+  padding: 4px 0 2px 0;
+}
+
+/* ── Single pending line ── */
+
+.dg-mcp-pending-line {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  padding: 1px 8px 1px 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: inherit;
+  font-family: inherit;
+}
+
+.dg-mcp-pending-indent {
+  flex-shrink: 0;
+}
+
+.dg-mcp-pending-bullet {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+  opacity: 0.4;
+  font-size: 6px;
+  line-height: 1.55;
+}
+
+.dg-mcp-pending-toggle {
+  flex-shrink: 0;
+  width: 18px;
+  text-align: center;
+  opacity: 0.4;
+  font-size: 9px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.dg-mcp-pending-toggle:hover {
+  opacity: 0.8;
+}
+
+.dg-mcp-pending-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.dg-mcp-pending-count {
+  opacity: 0.5;
+  font-size: 11px;
+  margin-left: 4px;
+  white-space: nowrap;
+  font-style: italic;
+}
+
+/* ── Action row ── */
+
+.dg-mcp-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 5px 22px;
+  border-top: 1px solid rgba(45, 164, 78, 0.12);
+  margin-top: 3px;
+}
+
+.dg-mcp-action-btn {
+  appearance: none;
+  border: none;
+  border-radius: 5px;
+  padding: 4px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.4;
+  transition: background 80ms;
+}
+
+.dg-mcp-action-btn--approve {
+  background: var(--dg-approve-bg);
+  color: var(--dg-approve-color);
+}
+
+.dg-mcp-action-btn--approve:hover {
+  background: var(--dg-approve-hover);
+}
+
+.dg-mcp-action-btn--reject {
+  background: var(--dg-reject-bg);
+  color: var(--dg-reject-color);
+}
+
+.dg-mcp-action-btn--reject:hover {
+  background: var(--dg-reject-hover);
+}
+
+.dg-mcp-action-spacer {
+  flex: 1;
+}
+
+.dg-mcp-action-summary {
+  font-size: 11px;
+  opacity: 0.5;
+}

@@ -11,7 +11,9 @@
   },
   "scripts": {
     "build": "tsc",
-    "dev": "tsx src/index.ts"
+    "build:roam": "tsx apps/roam/scripts/build.ts",
+    "dev": "tsx src/index.ts",
+    "dev:roam": "tsx apps/roam/scripts/dev.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.0",

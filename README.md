@@ -2,7 +2,7 @@
 
 # Discourse Graph MCP Server
 
-An AI bridge to your Roam Research graph. Ask questions about your discourse graph, explore relationships between research nodes, analyze pilot user feedback, and read/write pages and blocks — all through natural conversation with Claude.
+An AI bridge to your Roam Research graph. Ask questions about your discourse graph, explore relationships between research nodes, analyze pilot user feedback, and read/write pages and blocks — including buffered append proposals for Roam-side target visibility — all through natural conversation with Claude.
 
 ## What Can I Do With This?
 
@@ -12,6 +12,7 @@ An AI bridge to your Roam Research graph. Ask questions about your discourse gra
 - "Which pilots mention Canvas?" (live search, works immediately)
 - "What should we build next according to our pilots?" (needs the [knowledge index](#pilot-knowledge-index) built first)
 - Full read/write access to Roam pages and blocks
+- Multi-batch write proposals with Roam-native approval — virtual blocks render inline at the target parent (`propose_write` / `propose_write_batch`)
 - Raw Datalog queries, typed discourse relations, query builder execution, K-hop graph traversal
 
 No code required. You talk to Claude; Claude talks to your graph.
@@ -179,7 +180,11 @@ Open a new Claude session and try:
 | "Read the page about our experiment" | Fetches the page content tree |
 | "Create a new claim: X causes Y" | Creates a new page in the graph |
 | "Add a block under this node" | Creates a child block |
+| "Propose these blocks under this node" | Buffers a batch via `propose_write_batch`. Virtual blocks appear inline in Roam at the target parent. You approve or reject in Roam. |
+| "Add blocks to three different parents" | Multiple batches coexist. Each renders at its parent in Roam with its own approve/reject buttons. |
 | "Move this block under that parent" | Restructures content |
+
+For writes where you want to see and approve the target in Roam before anything is created, use `propose_write_batch` (or `propose_write` for a single branch). The [Write Visibility Plugin](#write-visibility-plugin) renders virtual blocks at each parent with approve/reject controls. Direct `create_block` remains available and executes immediately.
 
 ### Pilot Users — Live Search
 
@@ -258,9 +263,42 @@ Only changed pages get re-processed.
 
 ---
 
+## Write Visibility Plugin
+
+A Roam extension that renders proposed writes inline in your graph so you can approve or reject them without leaving Roam.
+
+### What it does
+
+When an agent calls `propose_write_batch`, the plugin picks up the proposal and renders virtual DOM blocks at the target parent's location. Each batch shows:
+- Virtual blocks with a green left border, previewing the content that would be created
+- **Approve** and **Reject** buttons per batch
+- A fixed pill bar (bottom-right) showing batch count and total block count, with arrow navigation between batches and bulk approve/reject-all actions
+
+Multiple proposals to different parents coexist simultaneously. The plugin auto-scrolls new batches into view and expands collapsed ancestor chains in place (never zooms into a single block).
+
+### Install
+
+1. Build from the repo root:
+   ```bash
+   npx tsx apps/roam/scripts/build.ts
+   ```
+2. In Roam, open **Developer Tools** (Ctrl+Shift+I or Cmd+Opt+I)
+3. Load `apps/roam/dist/extension.js` as a custom extension
+
+The plugin polls `http://127.0.0.1:3597/write-visibility/current` every 1.2 seconds. No configuration needed if the MCP server is running.
+
+### Debug
+
+```js
+window.dgMcpWriteLocator.getState()   // current plugin state
+window.dgMcpWriteLocator.refresh()    // force an immediate poll
+```
+
+---
+
 ## Tools Reference
 
-44 tools: 23 Roam base + 21 Discourse Graph.
+48 tools: 23 Roam base + 21 Discourse Graph + 4 Buffered Write Visibility.
 
 <details>
 <summary><strong>Graph Management</strong> — connect and inspect your Roam graph</summary>
@@ -412,6 +450,20 @@ These are part of the indexing workflow. When you say "index all pilot pages", C
 
 </details>
 
+<details>
+<summary><strong>Buffered Write Visibility</strong> — multi-batch Roam-native write approval</summary>
+
+| Tool | Description |
+|------|-------------|
+| `propose_write_batch` | Buffer a same-parent append batch. Multiple batches to different parents coexist. |
+| `propose_write` | Convenience wrapper: propose a single branch as a one-branch batch. |
+| `get_pending_write_batch` | Poll a batch by ID. Returns `pending` while waiting, or `resolved` with `approved`/`rejected` after the user acts in Roam. |
+| `clear_pending_write_batch` | Manually clear a batch (the Roam plugin handles this normally). |
+
+Agents should propose ALL writes before polling for resolutions. After proposing, call `get_pending_write_batch(batchId)` to check the outcome.
+
+</details>
+
 ---
 
 ## Architecture
@@ -424,12 +476,15 @@ Claude (any MCP client)
 discourse-graph-mcp
     |-- 23 Roam base tools (from @roam-research/roam-tools-core)
     |-- 21 Discourse Graph tools
+    |-- 4 Buffered write-visibility tools
+    |-- Write-visibility bridge (127.0.0.1:3597)
     |
     | HTTP to localhost
     v
-Roam Desktop (Local API)
-    v
-Your Roam Graph
+Roam Desktop (Local API)        Roam Plugin (apps/roam/)
+    v                               |
+Your Roam Graph                     polls bridge, renders virtual blocks,
+                                    approve/reject per batch
 
 Local data:
     ~/.discourse-graph-mcp/pilot-index.json (knowledge index, never shared)
@@ -438,6 +493,7 @@ Local data:
 - Discourse graph tools are **read-only**. Writes use the Roam base tools.
 - Auth reuses `~/.roam-tools.json` from `roam-mcp connect`. No separate setup.
 - The knowledge index is local to your machine. It's a cache — rebuild anytime.
+- The write-visibility bridge and Roam plugin enable in-graph approval for proposed writes.
 
 ---
 
