@@ -13,6 +13,7 @@
     "build": "tsc",
     "build:roam": "tsx apps/roam/scripts/build.ts",
     "dev": "tsx src/index.ts",
+    "test": "tsx --test tests/*.test.ts",
     "dev:roam": "tsx apps/roam/scripts/dev.ts"
   },
   "dependencies": {

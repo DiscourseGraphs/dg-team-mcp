@@ -78,6 +78,43 @@ If you are actively developing the server, you can also run it directly from sou
 codex mcp add discourse-graph -- /path/to/discourse-graph-mcp/node_modules/.bin/tsx /path/to/discourse-graph-mcp/src/index.ts
 ```
 
+### Updating an existing install
+
+If you already have the MCP server configured from a local checkout:
+
+```bash
+git pull
+npm install
+npm run build
+```
+
+Then restart the CLI sessions that use the `discourse-graph` MCP server. If a
+stale MCP process is still holding the Roam write visibility bridge port, stop
+that MCP child process and let a fresh session start it again:
+
+```bash
+ss -ltnp 'sport = :3597'
+kill <pid>
+```
+
+A current bridge reports owner/client diagnostics:
+
+```bash
+curl -s http://127.0.0.1:3597/write-visibility/health
+```
+
+```json
+{
+  "ok": true,
+  "role": "owner",
+  "service": "dg-team-mcp-write-visibility",
+  "pid": 12345,
+  "cwd": "/path/to/project",
+  "pendingCount": 0,
+  "port": 3597
+}
+```
+
 Verify it was added:
 
 ```bash

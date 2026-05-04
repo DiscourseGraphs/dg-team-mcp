@@ -503,7 +503,7 @@ server.tool("propose_write_batch", proposeWriteBatchDescription,
         typeof args.graph === "string" ? args.graph : undefined;
       const { nickname } = await createClient(graph);
 
-      return handleProposeWriteBatch({
+      return await handleProposeWriteBatch({
         graph,
         graphNickname: nickname,
         parentUid: args.parentUid as string,
@@ -527,7 +527,7 @@ server.tool("propose_write", proposeWriteDescription,
         typeof args.graph === "string" ? args.graph : undefined;
       const { nickname } = await createClient(graph);
 
-      return handleProposeWrite({
+      return await handleProposeWrite({
         graph,
         graphNickname: nickname,
         parentUid: args.parentUid as string,
@@ -547,7 +547,7 @@ server.tool("propose_write", proposeWriteDescription,
 server.tool("get_pending_write_batch", getPendingWriteBatchDescription,
   GetPendingWriteBatchSchema.shape,
   async (args) =>
-    handleGetPendingWriteBatch({
+    await handleGetPendingWriteBatch({
       batchId: typeof args.batchId === "string" ? args.batchId : undefined,
     }),
 );
@@ -555,7 +555,7 @@ server.tool("get_pending_write_batch", getPendingWriteBatchDescription,
 server.tool("clear_pending_write_batch", clearPendingWriteBatchDescription,
   ClearPendingWriteBatchSchema.shape,
   async (args) =>
-    handleClearPendingWriteBatch({
+    await handleClearPendingWriteBatch({
       batchId: typeof args.batchId === "string" ? args.batchId : undefined,
     }),
 );
@@ -570,7 +570,7 @@ async function main() {
     }
   }
 
-  startWriteVisibilityBridge();
+  await startWriteVisibilityBridge();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Discourse Graph MCP server running");

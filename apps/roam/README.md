@@ -21,9 +21,30 @@ The plugin starts polling immediately. No configuration needed if the MCP server
 
 ## Bridge Contract
 
-The plugin polls the write-visibility HTTP bridge on the MCP server.
+The plugin polls the fixed localhost write-visibility bridge on the MCP server:
+`http://127.0.0.1:3597`. The first MCP process that binds this port is the
+bridge owner and keeps pending write state in memory. Later MCP processes act
+as bridge clients and forward proposed writes, status checks, and clears to the
+owner, so Roam only needs to poll one stable URL.
 
 ### Endpoints
+
+**`GET /write-visibility/health`**
+
+Returns bridge diagnostics.
+
+```json
+{
+  "ok": true,
+  "role": "owner",
+  "service": "dg-team-mcp-write-visibility",
+  "pid": 12345,
+  "cwd": "/path/to/project",
+  "startedAt": "2026-05-04T05:43:52.891Z",
+  "pendingCount": 0,
+  "port": 3597
+}
+```
 
 **`GET /write-visibility/current`**
 
@@ -35,15 +56,14 @@ Returns all pending batches, or 204 if none.
     {
       "batchId": "batch-abc123",
       "parentUid": "Rv3w_HVX2",
-      "branches": [
+      "writes": [
         {
-          "text": "First block",
-          "children": [
-            { "text": "Nested child" }
-          ]
+          "label": "First branch",
+          "markdown": "- First block\n  - Nested child"
         },
         {
-          "text": "Second block"
+          "label": "Second branch",
+          "markdown": "- Second block"
         }
       ]
     }
@@ -67,8 +87,13 @@ Resolve a batch. The MCP server stores the resolution so agents can poll for the
 ### Agent-side polling
 
 After proposing, agents call `get_pending_write_batch(batchId)` which returns:
-- `{ status: "pending" }` while waiting for user action
+- `{ status: "pending_in_roam" }` while waiting for user action
 - `{ status: "resolved", resolution: "approved" }` or `{ status: "resolved", resolution: "rejected" }` after the user acts
+
+If another process already owns port 3597, the MCP server verifies that the
+owner is a DG Team MCP write visibility bridge before forwarding. If the port is
+owned by something else, `propose_write_batch` returns a tool error instead of
+claiming the batch is pending in Roam.
 
 ## UI Elements
 

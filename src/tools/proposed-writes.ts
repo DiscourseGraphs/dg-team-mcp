@@ -1,10 +1,9 @@
 import { z } from "zod";
 import {
-  clearPendingWriteBatch,
-  getPendingBatches,
-  getResolution,
-  setPendingWriteBatch,
+  defaultWriteVisibilityService,
   type ProposedWriteBranch,
+  type WriteVisibilityService,
+  WriteVisibilityBridgeError,
 } from "../write-visibility.js";
 
 type ToolContent =
@@ -89,27 +88,56 @@ export const getPendingWriteBatchDescription =
 export const clearPendingWriteBatchDescription =
   "Clear a pending write batch from the Roam locator bridge without writing.";
 
-const jsonResult = (payload: unknown): ToolResult => ({
+const jsonResult = (payload: unknown, isError = false): ToolResult => ({
   content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+  ...(isError ? { isError: true } : {}),
 });
 
-const buildPendingPayload = ({
+const errorResult = (error: unknown): ToolResult => {
+  if (error instanceof WriteVisibilityBridgeError) {
+    return jsonResult(
+      {
+        status: "error",
+        error: "write_locator_bridge_unavailable",
+        message: error.message,
+        attemptedUrl: error.attemptedUrl,
+        reason: error.reason,
+        bridge: error.bridge,
+      },
+      true,
+    );
+  }
+
+  return jsonResult(
+    {
+      status: "error",
+      error: "proposed_write_failed",
+      message: error instanceof Error ? error.message : String(error),
+    },
+    true,
+  );
+};
+
+const buildPendingPayload = async ({
   graph,
   graphNickname,
   parentUid,
+  writeVisibility,
   writes,
 }: {
   graph?: string;
   graphNickname?: string;
   parentUid: string;
+  writeVisibility: WriteVisibilityService;
   writes: ProposedWriteBranch[];
 }) => {
-  const batch = setPendingWriteBatch({
+  const stored = await writeVisibility.propose({
     graph,
     graphNickname,
     parentUid,
     writes,
   });
+  const { batch } = stored;
 
   return {
     status: "pending_in_roam",
@@ -125,104 +153,86 @@ const buildPendingPayload = ({
     blockCount: batch.blockCount,
     branchLabels: writes.map((write, index) => write.label || `branch-${index + 1}`),
     createdAt: batch.createdAt,
+    storedVia: stored.storedVia,
+    bridge: stored.bridge,
   };
 };
 
-export const handleProposeWriteBatch = ({
+export const handleProposeWriteBatch = async ({
   graph,
   graphNickname,
   parentUid,
+  writeVisibility = defaultWriteVisibilityService,
   writes,
 }: {
   graph?: string;
   graphNickname?: string;
   parentUid: string;
+  writeVisibility?: WriteVisibilityService;
   writes: ProposedWriteBranch[];
-}) =>
-  jsonResult(
-    buildPendingPayload({
-      graph,
-      graphNickname,
-      parentUid,
-      writes,
-    }),
-  );
+}) => {
+  try {
+    return jsonResult(
+      await buildPendingPayload({
+        graph,
+        graphNickname,
+        parentUid,
+        writeVisibility,
+        writes,
+      }),
+    );
+  } catch (error) {
+    return errorResult(error);
+  }
+};
 
-export const handleProposeWrite = ({
+export const handleProposeWrite = async ({
   graph,
   graphNickname,
   label,
   markdown,
   parentUid,
+  writeVisibility = defaultWriteVisibilityService,
 }: {
   graph?: string;
   graphNickname?: string;
   label?: string;
   markdown: string;
   parentUid: string;
+  writeVisibility?: WriteVisibilityService;
 }) =>
   handleProposeWriteBatch({
     graph,
     graphNickname,
     parentUid,
+    writeVisibility,
     writes: [{ label, markdown }],
   });
 
-export const handleGetPendingWriteBatch = ({
+export const handleGetPendingWriteBatch = async ({
   batchId,
+  writeVisibility = defaultWriteVisibilityService,
 }: {
   batchId?: string;
+  writeVisibility?: WriteVisibilityService;
 }) => {
-  const batches = getPendingBatches();
-
-  if (batchId) {
-    const match = batches.find((b) => b.batchId === batchId);
-    if (match) {
-      return jsonResult({
-        status: "pending_in_roam",
-        batches: [match],
-      });
-    }
-
-    const resolution = getResolution(batchId);
-    if (resolution) {
-      return jsonResult({
-        status: "resolved",
-        resolution: resolution.resolution,
-        resolvedAt: resolution.resolvedAt,
-        batchId: resolution.batchId,
-        parentUid: resolution.parentUid,
-      });
-    }
-
-    return jsonResult({
-      status: batches.length > 0 ? "mismatch" : "empty",
-      pendingBatchIds: batches.map((b) => b.batchId),
-      requestedBatchId: batchId,
-    });
+  try {
+    return jsonResult(await writeVisibility.getStatus(batchId));
+  } catch (error) {
+    return errorResult(error);
   }
-
-  if (batches.length === 0) {
-    return jsonResult({
-      status: "empty",
-      batches: [],
-    });
-  }
-
-  return jsonResult({
-    status: "pending_in_roam",
-    batches,
-  });
 };
 
-export const handleClearPendingWriteBatch = ({
+export const handleClearPendingWriteBatch = async ({
   batchId,
+  writeVisibility = defaultWriteVisibilityService,
 }: {
   batchId?: string;
+  writeVisibility?: WriteVisibilityService;
 }) => {
-  const cleared = clearPendingWriteBatch(batchId);
-  return jsonResult({
-    cleared: Boolean(cleared),
-    clearedBatch: cleared,
-  });
+  try {
+    return jsonResult(await writeVisibility.clear(batchId));
+  } catch (error) {
+    return errorResult(error);
+  }
 };
