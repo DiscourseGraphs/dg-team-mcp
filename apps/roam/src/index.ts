@@ -38,6 +38,13 @@ type RoamOnloadArgs = {
   extensionAPI?: unknown;
 };
 
+type DgMcpWriteLocatorApi = {
+  getState: () => unknown;
+  refresh: () => Promise<void>;
+  setDebug: (enabled: boolean) => void;
+  stop: () => void;
+};
+
 declare global {
   interface Window {
     roamAlphaAPI: {
@@ -57,10 +64,10 @@ declare global {
         };
       };
     };
-    dgMcpWriteLocator?: {
-      getState: () => unknown;
-      refresh: () => Promise<void>;
-    };
+    __dgMcpWriteLocatorCleanup?: () => void;
+    __dgMcpWriteLocatorDebug?: boolean;
+    __dgMcpWriteLocatorInstanceId?: string;
+    dgMcpWriteLocator?: DgMcpWriteLocatorApi;
   }
 }
 
@@ -70,7 +77,39 @@ const BRIDGE_URL = "http://127.0.0.1:3597";
 const STYLE_ID = "dg-mcp-locator-style";
 const PILL_ID = "dg-mcp-write-pill";
 const PENDING_CONTAINER_CLASS = "dg-mcp-pending-container";
+const FETCH_TIMEOUT_MS = 2500;
 const POLL_MS = 1200;
+
+const INSTANCE_ID =
+  `dg_mcp_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+function debugLog(...args: unknown[]): void {
+  if (window.__dgMcpWriteLocatorDebug) console.log(...args);
+}
+
+function debugWarn(...args: unknown[]): void {
+  if (window.__dgMcpWriteLocatorDebug) console.warn(...args);
+}
+
+async function fetchBridge(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    FETCH_TIMEOUT_MS,
+  );
+
+  try {
+    return await fetch(`${BRIDGE_URL}${path}`, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 
 // ── Markdown parser ──
 
@@ -310,6 +349,8 @@ function renderTree(
 
 let currentBatches = new Map<string, ResolvedBatch>();
 const committingBatches = new Set<string>();
+let isLoaded = false;
+let pollInFlight = false;
 let pollHandle = 0;
 let pillEl: HTMLDivElement | null = null;
 let collapsedNodes = new Set<BlockNode>();
@@ -317,17 +358,19 @@ let focusedBatchIndex = 0;
 let bulkConfirmArmed = false;
 
 function injectStyles(): void {
-  if (document.getElementById(STYLE_ID)) return;
+  document.getElementById(STYLE_ID)?.remove();
   const el = document.createElement("style");
   el.id = STYLE_ID;
+  el.dataset.dgMcpWriteLocatorInstance = INSTANCE_ID;
   el.textContent = styles;
   document.head.appendChild(el);
 }
 
 function mountPill(): void {
-  if (document.getElementById(PILL_ID)) return;
+  document.getElementById(PILL_ID)?.remove();
   const pill = document.createElement("div");
   pill.id = PILL_ID;
+  pill.dataset.dgMcpWriteLocatorInstance = INSTANCE_ID;
   pill.hidden = true;
   pill.addEventListener("click", handlePillClick);
   document.body.appendChild(pill);
@@ -642,7 +685,7 @@ async function handleApprove(batchId: string): Promise<void> {
       block: { uid: batch.parentUid, open: true },
     });
 
-    await fetch(`${BRIDGE_URL}/write-visibility/clear`, {
+    await fetchBridge("/write-visibility/clear", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ batchId, resolution: "approved" }),
@@ -674,7 +717,7 @@ async function handleReject(batchId: string): Promise<void> {
       block: { uid: batch.parentUid, open: true },
     });
 
-    await fetch(`${BRIDGE_URL}/write-visibility/clear`, {
+    await fetchBridge("/write-visibility/clear", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ batchId, resolution: "rejected" }),
@@ -688,14 +731,17 @@ async function handleReject(batchId: string): Promise<void> {
 }
 
 async function pollBridge(): Promise<void> {
-  if (committingBatches.size > 0) return;
+  if (!isLoaded || committingBatches.size > 0 || pollInFlight) return;
 
+  pollInFlight = true;
   try {
-    const res = await fetch(`${BRIDGE_URL}/write-visibility/current`, {
+    const res = await fetchBridge("/write-visibility/current", {
       headers: { Accept: "application/json" },
     });
 
-    console.log("[dg-mcp] poll status=%d", res.status);
+    if (!isLoaded) return;
+
+    debugLog("[dg-mcp] poll status=%d", res.status);
 
     if (res.status === 204 || res.status === 404) {
       if (currentBatches.size > 0) {
@@ -713,7 +759,7 @@ async function pollBridge(): Promise<void> {
       batches?: PendingBatch[];
       currentBatch?: PendingBatch;
     };
-    console.log("[dg-mcp] payload:", JSON.stringify(payload).slice(0, 200));
+    debugLog("[dg-mcp] payload:", JSON.stringify(payload).slice(0, 200));
 
     const batches = Array.isArray(payload?.batches)
       ? payload.batches
@@ -721,11 +767,11 @@ async function pollBridge(): Promise<void> {
         ? [payload.currentBatch]
         : null;
     if (!batches || batches.length === 0) {
-      console.log("[dg-mcp] no batches in payload");
+      debugLog("[dg-mcp] no batches in payload");
       return;
     }
 
-    console.log("[dg-mcp] %d batch(es) found", batches.length);
+    debugLog("[dg-mcp] %d batch(es) found", batches.length);
 
     const incomingIds = new Set(batches.map((b) => b.batchId));
 
@@ -743,11 +789,11 @@ async function pollBridge(): Promise<void> {
 
       const resolved = resolveBatch(batch);
       if (!resolved) {
-        console.warn("[dg-mcp] Could not resolve parent %s — not found in graph", batch.parentUid);
+        debugWarn("[dg-mcp] Could not resolve parent %s — not found in graph", batch.parentUid);
         continue;
       }
 
-      console.log("[dg-mcp] resolved %s → %s (%s)", batch.batchId, resolved.parentLabel, resolved.kind);
+      debugLog("[dg-mcp] resolved %s → %s (%s)", batch.batchId, resolved.parentLabel, resolved.kind);
       currentBatches.set(batch.batchId, resolved);
 
       for (const tree of resolved.trees) {
@@ -779,36 +825,76 @@ async function pollBridge(): Promise<void> {
 
     renderPill();
   } catch (err) {
-    console.warn("[dg-mcp] poll failed:", err);
+    debugWarn("[dg-mcp] poll failed:", err);
+  } finally {
+    pollInFlight = false;
   }
 }
 
 // ── Lifecycle ──
 
+function cleanup(): void {
+  isLoaded = false;
+
+  if (pollHandle) window.clearInterval(pollHandle);
+  pollHandle = 0;
+  pollInFlight = false;
+
+  clearPendingUI();
+
+  const pill = pillEl ?? document.getElementById(PILL_ID);
+  if (pill?.dataset.dgMcpWriteLocatorInstance === INSTANCE_ID) {
+    pill.remove();
+  }
+  pillEl = null;
+
+  const style = document.getElementById(STYLE_ID);
+  if (style?.dataset.dgMcpWriteLocatorInstance === INSTANCE_ID) {
+    style.remove();
+  }
+
+  currentBatches = new Map();
+  committingBatches.clear();
+  collapsedNodes = new Set();
+  focusedBatchIndex = 0;
+  bulkConfirmArmed = false;
+
+  if (window.__dgMcpWriteLocatorInstanceId === INSTANCE_ID) {
+    delete window.__dgMcpWriteLocatorCleanup;
+    delete window.__dgMcpWriteLocatorInstanceId;
+    delete window.dgMcpWriteLocator;
+  }
+}
+
 const onload = async (_args?: RoamOnloadArgs) => {
+  window.__dgMcpWriteLocatorCleanup?.();
+  window.__dgMcpWriteLocatorInstanceId = INSTANCE_ID;
+  window.__dgMcpWriteLocatorCleanup = cleanup;
+
+  isLoaded = true;
   injectStyles();
   mountPill();
-  void pollBridge();
-  pollHandle = window.setInterval(() => void pollBridge(), POLL_MS);
 
   window.dgMcpWriteLocator = {
-    getState: () => ({ currentBatches: Object.fromEntries(currentBatches), committingBatches: Array.from(committingBatches) }),
+    getState: () => ({
+      committingBatches: Array.from(committingBatches),
+      currentBatches: Object.fromEntries(currentBatches),
+      instanceId: INSTANCE_ID,
+      pollInFlight,
+    }),
     refresh: () => pollBridge(),
+    setDebug: (enabled: boolean) => {
+      window.__dgMcpWriteLocatorDebug = enabled;
+    },
+    stop: cleanup,
   };
+
+  void pollBridge();
+  pollHandle = window.setInterval(() => void pollBridge(), POLL_MS);
 
   console.info("[dg-team-mcp] Write locator loaded (multi-batch)");
 };
 
-const onunload = () => {
-  if (pollHandle) window.clearInterval(pollHandle);
-  pollHandle = 0;
-  clearPendingUI();
-  pillEl?.remove();
-  pillEl = null;
-  document.getElementById(STYLE_ID)?.remove();
-  currentBatches = new Map();
-  collapsedNodes = new Set();
-  delete window.dgMcpWriteLocator;
-};
+const onunload = () => cleanup();
 
 export default { onload, onunload };
