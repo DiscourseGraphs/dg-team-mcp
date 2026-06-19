@@ -178,7 +178,39 @@ Open a new Claude session and try:
 "What discourse node types are in my graph?"
 ```
 
-> **Note:** This server includes all standard Roam MCP tools. You do **not** need `@roam-research/roam-mcp` installed separately — remove it if you have it to avoid duplicate tools.
+> **Note:** By default this server exposes only the **discourse-read tools** — the base Roam tools are **off** (see [Tool groups](#tool-groups)). That makes it safe to run alongside the official `@roam-research/roam-mcp`. To use this server as a standalone drop-in that also provides the base Roam tools, set `DG_MCP_BASE_TOOLS=on` (then remove `@roam-research/roam-mcp` to avoid duplicate tools).
+
+---
+
+## Tool groups
+
+By default the server registers only the **8-tool discourse-read cluster**:
+`get_discourse_node_types`, `get_all_discourse_nodes`, `search_nodes`, `get_node`,
+`get_linked_nodes`, `get_relationships`, `get_node_neighborhood`, `get_node_section`.
+
+Every other group is **off by default** and re-enabled with an environment
+variable (set to `1`/`true`/`on`/`yes`) in your MCP server config:
+
+| Env var | Enables |
+|---------|---------|
+| `DG_MCP_BASE_TOOLS` | the 23 base Roam tools (re-exported from `@roam-research/roam-tools-core`) |
+| `DG_MCP_EXTRA_DISCOURSE_TOOLS` | `run_discourse_query`, `get_node_images`, `get_researcher_contributions`, `catch_me_up`, `get_users` |
+| `DG_MCP_PILOT_TOOLS` | pilot-analysis tools (`get_pilot_users`, `search_pilots_live`, `index_pilot_pages`, …) |
+| `DG_MCP_WRITE_TOOLS` | buffered write-visibility tools (`propose_write_batch`, …) + the write-visibility bridge |
+
+Example (Claude Code) — lean discourse-read add-on alongside `@roam-research/roam-mcp` (the default; no env needed):
+
+```bash
+claude mcp add -s user discourse-graph -- node /path/to/discourse-graph-mcp/dist/index.js
+```
+
+Example — standalone, with the base and pilot groups enabled:
+
+```bash
+claude mcp add -s user discourse-graph \
+  -e DG_MCP_BASE_TOOLS=on -e DG_MCP_PILOT_TOOLS=on \
+  -- node /path/to/discourse-graph-mcp/dist/index.js
+```
 
 ---
 
@@ -335,7 +367,7 @@ window.dgMcpWriteLocator.refresh()    // force an immediate poll
 
 ## Tools Reference
 
-48 tools: 23 Roam base + 21 Discourse Graph + 4 Buffered Write Visibility.
+Up to 48 tools: 23 Roam base + 21 Discourse Graph + 4 Buffered Write Visibility. **By default only the 8-tool discourse-read cluster is registered** — see [Tool groups](#tool-groups) to enable the rest.
 
 <details>
 <summary><strong>Graph Management</strong> — connect and inspect your Roam graph</summary>

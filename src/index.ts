@@ -88,6 +88,27 @@ const server = new McpServer({
   version: "0.1.0",
 });
 
+// ── Tool-group toggles ───────────────────────────────────────────────
+// All groups default OFF, so the server exposes only the discourse-read
+// cluster: get_discourse_node_types, get_all_discourse_nodes, search_nodes,
+// get_node, get_linked_nodes, get_relationships, get_node_neighborhood,
+// get_node_section. Opt a group back in by setting its env var to one of
+// 1/true/on/yes in the MCP server config:
+//   DG_MCP_BASE_TOOLS             — re-export the base Roam tools (you likely
+//                                   already run @roam-research/roam-mcp)
+//   DG_MCP_EXTRA_DISCOURSE_TOOLS  — run_discourse_query, get_node_images,
+//                                   get_researcher_contributions, catch_me_up,
+//                                   get_users
+//   DG_MCP_PILOT_TOOLS            — pilot-feedback indexing/analysis
+//   DG_MCP_WRITE_TOOLS            — buffered propose/approve writes (needs the
+//                                   companion Roam plugin)
+const envOn = (name: string): boolean =>
+  /^(1|true|on|yes)$/i.test(process.env[name] ?? "");
+const ENABLE_BASE_TOOLS = envOn("DG_MCP_BASE_TOOLS");
+const ENABLE_EXTRA_DISCOURSE_TOOLS = envOn("DG_MCP_EXTRA_DISCOURSE_TOOLS");
+const ENABLE_PILOT_TOOLS = envOn("DG_MCP_PILOT_TOOLS");
+const ENABLE_WRITE_TOOLS = envOn("DG_MCP_WRITE_TOOLS");
+
 const CREATE_BLOCK_PREFERENCE_NOTE =
   "Direct graph mutation. For append-only child blocks where you want " +
   "Roam-side target visibility first, prefer propose_write_batch " +
@@ -197,7 +218,9 @@ const withClient = (
 };
 
 // ── Roam base tools (re-exported from @roam-research/roam-tools-core) ──
-for (const tool of roamTools) {
+// Off by default — enable with DG_MCP_BASE_TOOLS only if you are NOT already
+// running the official @roam-research/roam-mcp (which ships these, newer).
+if (ENABLE_BASE_TOOLS) for (const tool of roamTools) {
   server.registerTool(tool.name, {
     description:
       tool.name === "create_block"
@@ -264,8 +287,8 @@ server.tool("get_all_discourse_nodes", getAllDiscourseNodesDescription,
   }),
 );
 
-// Tool 3: Run a discourse query by block UID
-server.tool("run_discourse_query", runQueryDescription,
+// Tool 3: Run a discourse query by block UID (extra; off by default)
+if (ENABLE_EXTRA_DISCOURSE_TOOLS) server.tool("run_discourse_query", runQueryDescription,
   RunQuerySchema.shape,
   withClient(async (client, _n, args) =>
     handleRunQuery(
@@ -323,8 +346,8 @@ server.tool("get_relationships", getRelationshipsDescription,
   ),
 );
 
-// Tool 8: Get images from a node's content
-server.tool("get_node_images", getNodeImagesDescription,
+// Tool 8: Get images from a node's content (extra; off by default)
+if (ENABLE_EXTRA_DISCOURSE_TOOLS) server.tool("get_node_images", getNodeImagesDescription,
   GetNodeImagesSchema.shape,
   withClient(async (client, _n, args) =>
     handleGetNodeImages(
@@ -351,8 +374,8 @@ server.tool("get_node_neighborhood", getNodeNeighborhoodDescription,
   ),
 );
 
-// Tool 10: Researcher contributions
-server.tool("get_researcher_contributions", getResearcherContributionsDescription,
+// Tool 10: Researcher contributions (extra; off by default)
+if (ENABLE_EXTRA_DISCOURSE_TOOLS) server.tool("get_researcher_contributions", getResearcherContributionsDescription,
   GetResearcherContributionsSchema.shape,
   withClient(async (client, _n, args) =>
     handleGetResearcherContributions(
@@ -377,8 +400,8 @@ server.tool("get_node_section", getNodeSectionDescription,
   ),
 );
 
-// Tool 12: Catch me up on a user's recent activity
-server.tool("catch_me_up", catchMeUpDescription,
+// Tool 12: Catch me up on a user's recent activity (extra; off by default)
+if (ENABLE_EXTRA_DISCOURSE_TOOLS) server.tool("catch_me_up", catchMeUpDescription,
   CatchMeUpSchema.shape,
   withClient(async (client, _n, args) =>
     handleCatchMeUp(
@@ -389,11 +412,14 @@ server.tool("catch_me_up", catchMeUpDescription,
   ),
 );
 
-// Tool 13: List all graph users
-server.tool("get_users", getUsersDescription,
+// Tool 13: List all graph users (extra; off by default)
+if (ENABLE_EXTRA_DISCOURSE_TOOLS) server.tool("get_users", getUsersDescription,
   GetUsersSchema.shape,
   withClient(async (client) => handleGetUsers(client)),
 );
+
+// ── Pilot-analysis tools (off by default; enable with DG_MCP_PILOT_TOOLS) ──
+if (ENABLE_PILOT_TOOLS) {
 
 // Tool 14: Get all pilot users
 server.tool("get_pilot_users", getPilotUsersDescription,
@@ -493,7 +519,10 @@ server.tool("save_pilot_index", savePilotIndexDescription,
   },
 );
 
-// ── Buffered write-visibility tools ──
+} // end pilot-analysis tools (DG_MCP_PILOT_TOOLS)
+
+// ── Buffered write-visibility tools (off by default; DG_MCP_WRITE_TOOLS) ──
+if (ENABLE_WRITE_TOOLS) {
 
 server.tool("propose_write_batch", proposeWriteBatchDescription,
   ProposeWriteBatchSchema.shape,
@@ -560,6 +589,8 @@ server.tool("clear_pending_write_batch", clearPendingWriteBatchDescription,
     }),
 );
 
+} // end buffered write-visibility tools (DG_MCP_WRITE_TOOLS)
+
 async function main() {
   try {
     await getMcpConfig();
@@ -570,7 +601,7 @@ async function main() {
     }
   }
 
-  await startWriteVisibilityBridge();
+  if (ENABLE_WRITE_TOOLS) await startWriteVisibilityBridge();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Discourse Graph MCP server running");
