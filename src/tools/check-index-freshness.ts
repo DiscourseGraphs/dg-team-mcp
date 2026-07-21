@@ -3,7 +3,7 @@
 // Reports stale, fresh, and unindexed pilots.
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import { getPageEditTime } from "../roam.js";
 import { readPilotIndex, INDEX_PATH } from "../pilot-index.js";
 import { getDiscourseNodeTypes } from "../discourse-config.js";

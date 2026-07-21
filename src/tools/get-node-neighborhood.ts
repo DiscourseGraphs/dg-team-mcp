@@ -6,7 +6,7 @@
 // — simplified: returns flat list of discovered nodes per hop level
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import { datalogQuery } from "../roam.js";
 
 export const GetNodeNeighborhoodSchema = z.object({

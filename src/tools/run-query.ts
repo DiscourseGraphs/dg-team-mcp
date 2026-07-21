@@ -3,7 +3,7 @@
 // query builder pipeline: read conditions → translate to Datalog → execute → return results.
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import { getBasicTreeByParentUid } from "../roam.js";
 import { getSubTree } from "../tree-utils.js";
 import parseQuery from "../query/parse-query.js";

@@ -6,7 +6,7 @@
 // — combined into a single tool that can query by author or list all authors
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import { datalogQuery } from "../roam.js";
 
 export const GetResearcherContributionsSchema = z.object({

@@ -8,7 +8,7 @@
 // — takes relation definitions from getDiscourseNodeTypes instead of globals
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import compileDatalog from "../query/compile-datalog.js";
 import { getInternalDiscourseConfig } from "../discourse-config.js";
 import { discourseNodeToDatalog } from "../query/discourse-node-utils.js";

@@ -5,7 +5,7 @@
 // Level 3 — TANGENTIAL: any-word match (words ≥4 chars)
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import {
   DEFAULT_TREE_DEPTH,
   datalogQuery,

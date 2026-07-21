@@ -3,7 +3,7 @@
 // Uses Datalog with clojure.string/includes? for matching.
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import { datalogQuery } from "../roam.js";
 
 export const SearchNodesSchema = z.object({

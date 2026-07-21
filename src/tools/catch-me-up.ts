@@ -11,7 +11,7 @@
 // 7. Return chronological, detailed, breadcrumb-style data
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import { datalogQuery } from "../roam.js";
 import { getDiscourseNodeTypes } from "../discourse-config.js";
 import getDiscourseNodeFormatExpression from "../format-expression.js";

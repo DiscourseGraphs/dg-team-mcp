@@ -5,7 +5,7 @@
 // Returns both views so the caller can synthesize a complete answer.
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import { readPilotIndex, INDEX_PATH } from "../pilot-index.js";
 import type { PilotIndex, PilotTopicItem } from "../pilot-index.js";
 import { handleGetPilotSupport } from "./get-pilot-support.js";

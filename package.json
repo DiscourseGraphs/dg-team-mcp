@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.0",
-    "@roam-research/roam-tools-core": "^0.4.2",
+    "@roam-research/roam-tools-core": "^0.9.1",
+    "@roam-research/roam-tools-local": "^0.9.1",
     "zod": "^3.25.0"
   },
   "devDependencies": {

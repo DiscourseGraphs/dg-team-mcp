@@ -1,4 +1,5 @@
-import { RoamClient, resolveGraph, getPort, RoamError } from "@roam-research/roam-tools-core";
+import { RoamClient, resolveGraph, getPort } from "@roam-research/roam-tools-local";
+import { RoamError } from "@roam-research/roam-tools-core";
 import type { TreeNode, RoamPullBlock } from "./types.js";
 
 export const DEFAULT_TREE_DEPTH = 10;

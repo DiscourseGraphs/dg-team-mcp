@@ -4,7 +4,7 @@
 // - includes embedding-ref-backed node text overrides
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import { datalogQuery } from "../roam.js";
 import { getInternalDiscourseConfig } from "../discourse-config.js";
 import { registerDiscourseTranslators } from "../query/register-discourse-translators.js";

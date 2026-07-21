@@ -7,7 +7,7 @@
 // — recursive tree traversal to find all images, not just first
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import {
   DEFAULT_TREE_DEPTH,
   getBasicTreeByParentUidWithMeta,

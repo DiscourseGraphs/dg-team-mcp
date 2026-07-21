@@ -2,7 +2,8 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { getMcpConfig, RoamClient, RoamError, tools as roamTools, routeToolCall } from "@roam-research/roam-tools-core";
+import { getMcpConfig, RoamClient, tools as roamTools, routeToolCall } from "@roam-research/roam-tools-local";
+import { RoamError } from "@roam-research/roam-tools-core";
 import { createClient } from "./roam.js";
 import {
   GetNodeTypesSchema, getNodeTypesDescription, handleGetNodeTypes,

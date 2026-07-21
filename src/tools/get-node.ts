@@ -6,7 +6,7 @@
 // — combined metadata + tree fetch in one tool
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import {
   DEFAULT_TREE_DEPTH,
   datalogQuery,

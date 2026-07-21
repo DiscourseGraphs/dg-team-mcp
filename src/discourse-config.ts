@@ -3,7 +3,7 @@
 // - apps/roam/src/utils/getDiscourseNodes.ts lines 105-177 (node parsing — parameterized)
 // - apps/roam/src/utils/getDiscourseRelations.ts lines 34-61 (relation parsing — parameterized, takes tree instead of global ref)
 
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import type {
   DiscourseNodeType,
   DiscourseRelationType,

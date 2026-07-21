@@ -3,7 +3,7 @@
 // — Supports a read-only subset of query-builder selections
 // — Surfaces unsupported selections instead of silently dropping them
 
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import conditionToDatalog from "./condition-to-datalog.js";
 import type {
   DatalogClause,

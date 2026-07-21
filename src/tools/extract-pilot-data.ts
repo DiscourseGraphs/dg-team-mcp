@@ -4,7 +4,7 @@
 // Designed for batched use: call with 3-5 pilot_uids at a time.
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import {
   DEFAULT_TREE_DEPTH,
   getBasicTreeByParentUidWithMeta,

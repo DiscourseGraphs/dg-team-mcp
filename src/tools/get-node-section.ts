@@ -4,7 +4,7 @@
 // This tool reads the node's block tree and extracts the named section.
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import {
   DEFAULT_TREE_DEPTH,
   getBasicTreeByParentUidWithMeta,

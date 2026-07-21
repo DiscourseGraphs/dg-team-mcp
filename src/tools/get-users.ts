@@ -3,7 +3,7 @@
 // Useful for resolving nicknames/partial names before calling other tools.
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import { datalogQuery } from "../roam.js";
 
 export const GetUsersSchema = z.object({

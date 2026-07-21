@@ -4,7 +4,7 @@
 // or falls back to searching for the tag.
 
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import { getDiscourseNodeTypes } from "../discourse-config.js";
 import getDiscourseNodeFormatExpression from "../format-expression.js";
 

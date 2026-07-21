@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { RoamClient } from "@roam-research/roam-tools-core";
+import type { RoamClient } from "@roam-research/roam-tools-local";
 import { getDiscourseNodeTypes } from "../discourse-config.js";
 
 export const GetNodeTypesSchema = z.object({
