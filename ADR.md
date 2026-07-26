@@ -47,13 +47,15 @@ This MCP server vertically integrates the Roam graph into Claude — giving an A
 ## ADR-003: Read-Only Discourse Tools, Writes Separate
 
 **Date:** 2026-03-20
-**Status:** Accepted
+**Status:** Superseded by ADR-018 (2026-07-26)
 
 **Context:** The discourse graph tools analyze and explore the graph. Accidentally modifying graph data during analysis would be harmful.
 
 **Decision:** All discourse graph tools are strictly read-only. Write operations exist only in the Roam base tools (`create_page`, `create_block`, `update_block`, etc.) and are clearly separated.
 
 **Result:** Running any analysis, search, or indexing tool has zero risk to graph data.
+
+**Why it was superseded:** The blanket read-only rule was the right default while every write could be expressed as ordinary blocks. Reified relations cannot: they are a typed graph edge, not prose, and asking a user to hand-assemble a props map defeats the purpose. ADR-018 narrows the rule instead of abandoning it — the *analysis* surface stays read-only, and exactly one discourse tool writes, behind its own env flag.
 
 ---
 
@@ -290,6 +292,66 @@ Internal tools are registered (Claude needs them) but documented separately.
 - Fire-and-forget proposals break the feedback loop
 
 **Trade-offs:** Requires Roam plugin installed. Plugin polls bridge every 1.2s (lightweight). Resolution tracking is in-memory (lost on server restart).
+
+---
+
+## ADR-018: Discourse Tools May Write Relations (Narrowing ADR-003)
+
+**Date:** 2026-07-26
+**Status:** Accepted
+**Supersedes:** ADR-003
+
+**Context:** The Roam extension moved from *inferred* relations (an edge exists when block structure happens to match a grammar triple) to *reified* ("stored") relations — one explicit block per edge, payload in `:block/props`. Stored relations are now the default for configs created after 2026-03-01. dg-team-mcp could neither read nor create them: `get_relationships` was inference-only and returned `relation_count: 0` for nodes that demonstrably had stored edges, and no tool in the repo could write block props at all.
+
+ADR-003 forbade the write half outright. But a discourse relation is not prose — it is a typed edge with a props payload and a schema uid. It cannot be expressed through `propose_write` (append-only markdown under one parent) or hand-assembled by a user in any reasonable way.
+
+**Decision:**
+1. The analysis surface stays read-only. ADR-003's guarantee holds for every search, indexing, and query tool.
+2. Exactly one discourse tool writes: `create_discourse_relation`, gated behind `DG_MCP_RELATION_WRITE`, **off by default**.
+3. That tool writes exactly one block per call, always as a child of `roam/js/discourse-graph/relations`, and never touches user prose.
+4. It refuses rather than guesses. Ambiguous labels, unknown uids, non-discourse nodes, and illegal type pairings are errors that name the fix — never a best-effort write.
+5. It is idempotent: an identical directed triple returns the existing `relation_uid` instead of creating a duplicate.
+6. It writes one direction only. The complement is resolved at query time; a stored reverse record would double-count.
+7. `dry_run` resolves and validates without mutating.
+
+**Why not route through the ADR-017 approval bridge:** that bridge renders proposed writes as virtual blocks at a target parent so the user can see where content lands. A relation record is a uid-stringed block full of opaque props — rendering it as a bullet communicates nothing, so the approval step would be theater. The honest options were a typed relation card in the Roam plugin (real work, deferred) or a validated direct write with `dry_run` (this ADR). If relation writes ever move to the plugin, ADR-017's card model is where they belong.
+
+**Trade-offs:** A misfired call adds a block to a config page rather than corrupting user content, and is undone by deleting one block. Against that, there is no user-visible approval step, which is why the tool ships disabled and validates aggressively before writing.
+
+---
+
+## ADR-019: Block Props Are Writable — and How They Silently Fail
+
+**Date:** 2026-07-26
+**Status:** Accepted
+
+**Context:** It was widely assumed inside the project that the Roam Local API could not write `:block/props`, which is what made stored relations look unreachable from MCP. That assumption was wrong, and the reason it survived is instructive: `@roam-research/roam-tools-*` never *passes* props for blocks (`updateBlock` whitelists `string`/`open`/`heading`/`children-view-type`/`text-align`), so nothing in the dependency surface hints that props are supported. `client.call` is pass-through, and Roam honors the key.
+
+**Verified against sandbox-dg, 2026-07-26:** a relation written purely through Local API calls is indistinguishable from one written by the extension, under the extension's own read query.
+
+**Decision:** Write props via `data.block.update`. Because `data.block.fromMarkdown` can set neither uid nor props, creation is two calls — create, then update with `string` and `props` together. **If the second call fails, delete the block from the first.** Live graphs already carry orphans from interrupted two-step writes (a uid-shaped string with no props); we do not add to them.
+
+**Two silent failures, both of which read as "there is no data":**
+
+1. **String-write / keyword-read.** Props go over the wire as JSON with plain string keys, and Roam keywordizes them on persist — but the JSON round-trip renders them back as *strings*, so dumping a props map tells you nothing about which form the index wants. Datalog needs keywords:
+
+   ```clojure
+   [(get ?props :discourse-graph) ?dg]   ; correct
+   [(get ?props "discourse-graph") ?dg]  ; ZERO rows against known-good data
+   ```
+
+   This cost a debugging cycle during implementation: a correct write looked like a failed write because the *verification query* was wrong. The extension uses the keyword form (`registerDiscourseDatalogTranslators.ts:529`).
+
+2. **Never return a props map from `:find`.** Measured on the same 400+ records:
+
+   | query form | raw `q` | `data.fast.q` |
+   | --- | --- | --- |
+   | `[:find ?props ...]` | 403 rows | `[null]` |
+   | `[(get ?props :k) ?v]`, `:find ?v` | 404 rows | 404 rows |
+
+   So relation reads use the ordinary `datalogQuery()` helper (which prefers `data.fast.q`) **provided every query destructures with `get` and never returns a raw map**. `src/canvas/props.ts` still needs the raw `q` action, because it genuinely wants the whole map back — that is the narrow exception, not the rule.
+
+**Why this matters for future work:** this is the same failure mode as ADR-004 — no error, no warning, just an empty result set that is indistinguishable from an empty graph. Anyone extending props usage should assume a zero-row result is a bug in their query until proven otherwise.
 
 ---
 

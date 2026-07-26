@@ -197,6 +197,7 @@ variable (set to `1`/`true`/`on`/`yes`) in your MCP server config:
 | `DG_MCP_EXTRA_DISCOURSE_TOOLS` | `run_discourse_query`, `get_node_images`, `get_researcher_contributions`, `catch_me_up`, `get_users` |
 | `DG_MCP_PILOT_TOOLS` | pilot-analysis tools (`get_pilot_users`, `search_pilots_live`, `index_pilot_pages`, …) |
 | `DG_MCP_WRITE_TOOLS` | buffered write-visibility tools (`propose_write_batch`, …) + the write-visibility bridge |
+| `DG_MCP_RELATION_WRITE` | `create_discourse_relation` — writes stored relation records directly (see [ADR-018](ADR.md)) |
 
 Example (Claude Code) — lean discourse-read add-on alongside `@roam-research/roam-mcp` (the default; no env needed):
 
@@ -467,7 +468,8 @@ Up to 48 tools: 23 Roam base + 21 Discourse Graph + 4 Buffered Write Visibility.
 | Tool | Description |
 |------|-------------|
 | `get_linked_nodes` | Outgoing references + incoming backlinks |
-| `get_relationships` | Typed discourse relations (Supports, Opposes, Informs, etc.) |
+| `get_relationships` | Typed discourse relations (Supports, Opposes, Informs, etc.), both inferred from the grammar and stored as explicit records; each result tagged `origin: inferred｜stored｜both` |
+| `create_discourse_relation` | Assert a typed relation between two nodes (needs `DG_MCP_RELATION_WRITE`) |
 | `get_node_neighborhood` | K-hop BFS traversal around a node |
 | `get_node_images` | Extract image URLs from a node's content |
 

@@ -16,6 +16,8 @@ import { fireQueryDetailed } from "../query/fire-query.js";
 import { registerDiscourseTranslators } from "../query/register-discourse-translators.js";
 import type { Result as QueryResult } from "../query/types.js";
 import { datalogQuery } from "../roam.js";
+import { getStoredRelationsForNode } from "../relations/read.js";
+import type { ResolvedStoredRelation } from "../relations/model.js";
 import getDiscourseNodeFormatExpression from "../format-expression.js";
 import type {
   InternalDiscourseNodeType,
@@ -165,7 +167,7 @@ ${whereClauses}
   return rows.length > 0;
 };
 
-const findDiscourseNodeType = async ({
+export const findDiscourseNodeType = async ({
   client,
   uid,
   nodes,
@@ -231,7 +233,13 @@ const buildSelections = (
   return [];
 };
 
-const getDedupedRelations = (relations: InternalDiscourseRelationType[]) =>
+/**
+ * The parsed config yields the same relation definition more than once (each
+ * grammar entry surfaces once per triple set), so every consumer must dedupe
+ * before matching — otherwise a uniquely-identified relation still looks
+ * ambiguous.
+ */
+export const getDedupedRelations = (relations: InternalDiscourseRelationType[]) =>
   Array.from(
     new Map(
       relations.map((relation) => [
@@ -263,6 +271,64 @@ const runWithConcurrencyLimit = async <T,>(
   await Promise.all(runners);
 };
 
+type RelationGroup = {
+  relation: string;
+  direction: "forward" | "complement";
+  results: Array<QueryResult & { origin: string; relation_uid?: string }>;
+};
+
+/**
+ * Union the two ways a relation can exist in a graph: matched by the grammar's
+ * triple pattern ("inferred"), or written as an explicit record ("stored").
+ * A node reached both ways is reported once, tagged "both" — the same edge, not
+ * two edges. Callers need the distinction because only stored edges have a
+ * relation_uid that can be edited or deleted.
+ */
+const mergeStoredRelations = (
+  inferred: Array<{
+    relation: string;
+    direction: "forward" | "complement";
+    results: QueryResult[];
+  }>,
+  stored: ResolvedStoredRelation[],
+): RelationGroup[] => {
+  const keyOf = (relation: string, direction: string) =>
+    `${relation}::${direction}`;
+  const grouped = new Map<string, RelationGroup>();
+
+  for (const group of inferred) {
+    grouped.set(keyOf(group.relation, group.direction), {
+      relation: group.relation,
+      direction: group.direction,
+      results: group.results.map((r) => ({ ...r, origin: "inferred" })),
+    });
+  }
+
+  for (const rel of stored) {
+    const key = keyOf(rel.label, rel.direction);
+    const group = grouped.get(key) ?? {
+      relation: rel.label,
+      direction: rel.direction,
+      results: [],
+    };
+    const hit = group.results.find((r) => r.uid === rel.targetUid);
+    if (hit) {
+      hit.origin = "both";
+      hit.relation_uid = rel.relationUid;
+    } else {
+      group.results.push({
+        uid: rel.targetUid,
+        text: rel.targetTitle,
+        origin: "stored",
+        relation_uid: rel.relationUid,
+      });
+    }
+    grouped.set(key, group);
+  }
+
+  return [...grouped.values()].filter((g) => g.results.length > 0);
+};
+
 export const handleGetRelationships = async (
   client: RoamClient,
   targetUid: string,
@@ -277,13 +343,15 @@ export const handleGetRelationships = async (
     });
     nodeNameByType["*"] = "Any";
 
-    const targetNodeType = await findDiscourseNodeType({
-      client,
-      uid: targetUid,
-      nodes: config.nodes,
-    });
+    // Stored relations are keyed by uid alone, so they resolve even for nodes
+    // whose title no longer matches a configured node type.
+    const [targetNodeType, stored] = await Promise.all([
+      findDiscourseNodeType({ client, uid: targetUid, nodes: config.nodes }),
+      getStoredRelationsForNode(client, targetUid, config.relations),
+    ]);
 
     if (!targetNodeType) {
+      const groups = mergeStoredRelations([], stored.relations);
       return {
         content: [
           {
@@ -291,8 +359,10 @@ export const handleGetRelationships = async (
             text: JSON.stringify(
               {
                 uid: targetUid,
-                relation_count: 0,
-                relations: [],
+                note: "Not a recognized discourse node type; inferred relations were not queried.",
+                relation_count: groups.length,
+                stale_schema_records: stored.staleSchemaCount,
+                relations: groups,
               },
               null,
               2,
@@ -376,6 +446,8 @@ export const handleGetRelationships = async (
       }
     });
 
+    const groups = mergeStoredRelations(results, stored.relations);
+
     return {
       content: [
         {
@@ -385,8 +457,10 @@ export const handleGetRelationships = async (
               uid: targetUid,
               node_type: nodeNameByType[targetNodeType] || targetNodeType,
               relevant_relation_queries: relevantRelations.length,
-              relation_count: results.length,
-              relations: results,
+              relation_count: groups.length,
+              stored_relation_records: stored.relations.length,
+              stale_schema_records: stored.staleSchemaCount,
+              relations: groups,
             },
             null,
             2,
