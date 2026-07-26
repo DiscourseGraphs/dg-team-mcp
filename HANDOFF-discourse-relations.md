@@ -113,11 +113,39 @@ Progress is tracked in the checklist at the bottom of this file.
 - [x] `get_relationships` reads stored relations + inferred, merged and tagged
 - [x] `create_discourse_relation` tool, env-gated behind `DG_MCP_RELATION_WRITE`
 - [x] ADR-003 superseded; ADR-018/019 written
-- [x] README updated
+- [x] README + ARCHITECTURE updated
 - [x] Smoke script against sandbox-dg — 13/13 passing, graph restored to baseline
-- [ ] ARCHITECTURE.md not yet updated
-- [ ] Unit tests (`tests/`) — only the live smoke script exists so far
-- [ ] Not yet exercised against dg-team (production, ~614 stored relations)
+- [x] Unit tests — `tests/relations.test.ts`, 8 passing (full suite 10/10)
+- [x] Read path validated against dg-team production, **read-only**
+- [ ] **No writes have ever been made to dg-team.** Only sandbox-dg has been
+      written to, and every test record was deleted. Writing to production needs
+      an explicit decision, not just flipping the env var.
+- [ ] Relation *deletion* / retraction has no tool. `deleteStoredRelation()` exists
+      as a primitive but is deliberately not exposed.
+- [ ] No provenance on the record (who asserted this, and why). Roam's
+      `:create/user` is all we get. The stated 1-year goal on
+      `Project/Reifying Relations` — "store assertions like 'Joel says that x
+      supports y'" — needs a props schema change, and should be agreed with the
+      extension team rather than invented here.
+- [ ] Cross-app sync: `reifiedRelationToCrossApp` lives on the unmerged branch
+      `eng-1865-publish-roam-stored-relations-for-shared-nodes`. Relations written
+      here are Roam-local until that lands. Keep the props shape exactly canonical
+      so they are picked up unchanged.
+
+### Production read-only validation (dg-team, 2026-07-26)
+
+```
+node types=22  relation defs=32 (raw 34 — note the duplication)
+stored relation records: 614
+dangling hasSchema: 124 across 3 missing schema uid(s)
+exact-duplicate triples: 1
+busiest node 6ibf7YBPF (degree 38): 21 resolved, 17 stale, 282ms
+```
+
+dg-team and sandbox-dg share the same 3 orphaned schema uids, so sandbox is a
+copy of production's grammar lineage. That 17-of-38 stale fraction on the busiest
+node is why stale records are counted in the response rather than dropped in
+silence — a bare "21 relations" would badly misrepresent that node.
 
 ## 7. One more trap, found during implementation
 

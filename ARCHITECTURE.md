@@ -97,6 +97,9 @@ The extension code uses `window.roamAlphaAPI` (browser context). The Local API e
 | Datalog collection binding | `:in $ [?uid ...]` with an array argument — works |
 | `:block/parents` | Transitive ancestors — a whole subtree in one query |
 | `clojure.string/starts-with?` | Works (see below — this table used to say otherwise) |
+| Datalog `(get ?props :keyword)` | Destructuring `:block/props` — works via all query actions |
+| `data.block.update` with `props` | **Writes `:block/props`.** Not exposed by roam-tools' `updateBlock`, but `client.call` passes it through (ADR-019) |
+| `data.page.update` with `props` | Writes page-level props (used by canvas) |
 
 ### What Does NOT Work
 | API / Feature | Failure Mode |
@@ -108,6 +111,9 @@ The extension code uses `window.roamAlphaAPI` (browser context). The Local API e
 | `clojure.string/includes?` | Unsafe / avoided in current implementation |
 | `re-pattern` / `re-find` in Datalog | Works |
 | `data.fast.q` action | May not be available (falls back to `data.backend.q`) |
+| `?props` returned from `:find` | Yields `[null]` via `data.fast.q`; only the raw `q` action returns the map |
+| `(get ?props "string-key")` | Silently returns **zero rows** — props keys are keywords in the index, even though the JSON round-trip renders them as strings (ADR-019) |
+| `data.block.fromMarkdown` with `uid`/`props` | Neither is honored — create, then `data.block.update` |
 
 ### Our Workarounds
 1. **Page discovery:** Datalog over `:node/title`, filtered in JS. `data.ai.search` is *not* safe for discovery — it caps at 20 results and reports the true count in `total`, so it silently returned 20 of dg-team's 27 node pages (see ADR-020)
@@ -116,6 +122,7 @@ The extension code uses `window.roamAlphaAPI` (browser context). The Local API e
 4. **Page UIDs:** Use `data.ai.getPage` instead of Datalog lookups
 5. **All query results:** Use tuple format `[:find ?a ?b :where ...]`, map to objects in JS — never use `:keys` or `pull`
 6. **Discourse graph semantics:** Register discourse-specific translators from the live graph config per request
+7. **Block props:** Always destructure inside the query with keyword `get` constants and never return the map, so the ordinary `datalogQuery()` path works. Write in two calls (create, then update with `string` + `props`), deleting the block if the second fails.
 
 ---
 
@@ -126,6 +133,10 @@ src/
 ├── index.ts                          # MCP server entry, registers all tools
 ├── write-visibility.ts               # In-memory pending/resolved batch store + HTTP bridge
 ├── roam.ts                           # RoamClient wrapper, Datalog helpers, tree fetching
+├── relations/                        # Stored (reified) discourse relations — see its README
+│   ├── model.ts                      #   contract: constants, types, every datalog query
+│   ├── read.ts                       #   relations for a node; exact-triple lookup for dedup
+│   └── write.ts                      #   two-step create primitive, with rollback
 ├── discourse-config.ts               # Config parsing (node types + relations)
 ├── tree-utils.ts                     # Pure utils (from roamjs-components)
 ├── defaults.ts                       # Default nodes + relations
@@ -219,7 +230,8 @@ export const parseQuery = (...) => { ... };
 | Tool | What | Data Source |
 |---|---|---|
 | `get_linked_nodes` | Outgoing refs + incoming backlinks | Datalog `block/refs` joins |
-| `get_relationships` | Typed discourse relations | Shared DG translators + `fireQueryDetailed` |
+| `get_relationships` | Typed discourse relations, inferred + stored, tagged by origin | `fireQueryDetailed` unioned with `relations/read.ts` |
+| `create_discourse_relation` | Assert one stored relation (gated: `DG_MCP_RELATION_WRITE`) | `relations/write.ts` |
 | `get_node_neighborhood` | K-hop BFS traversal | Repeated `block/refs` queries |
 | `get_node_images` | Image URLs from content | Recursive tree scan, regex |
 

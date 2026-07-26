@@ -284,7 +284,7 @@ type RelationGroup = {
  * two edges. Callers need the distinction because only stored edges have a
  * relation_uid that can be edited or deleted.
  */
-const mergeStoredRelations = (
+export const mergeStoredRelations = (
   inferred: Array<{
     relation: string;
     direction: "forward" | "complement";
