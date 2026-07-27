@@ -36,9 +36,14 @@ export type ResolvedStoredRelation = {
 // constants. Returning `?props` itself yields [null] via data.fast.q, and a
 // string-keyed get ("discourse-graph") silently returns zero rows. Both failures
 // look exactly like "there is no data".
+// `:block/page`, not `:block/children` — the extension's own read path
+// (registerDiscourseDatalogTranslators.ts) matches blocks at ANY depth on the
+// relations page, so a record that gets nested (a stray indent, an interrupted
+// write) stays visible to the plugin. Matching only direct children would make
+// us silently blind to records the plugin still honors.
 const PROPS_CLAUSES = `
   [?relPage :node/title "${RELATIONS_PAGE_TITLE}"]
-  [?relPage :block/children ?rel]
+  [?rel :block/page ?relPage]
   [?rel :block/uid ?relUid]
   [?rel :block/props ?props]
   [(get ?props :${DISCOURSE_GRAPH_PROP}) ?dg]

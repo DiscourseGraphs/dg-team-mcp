@@ -160,3 +160,71 @@ and the smoke script caught it.
 After deduping, "Supports" between a Result and a Hypothesis resolves uniquely even
 though the grammar defines "Supports" twice — the endpoint types disambiguate. The
 ambiguity path is still live for genuinely ambiguous cases.
+
+## 8. Re-verified against the CURRENT plugin (2026-07-27)
+
+Everything above was first proven against sandbox-dg while it was running a ~3-month-old
+build of the extension. The graph has since been updated to current. Re-checked:
+
+**Format is unchanged.** `createReifiedBlock.ts` has had exactly one commit touching it
+since 2025-11-27, and that commit deleted an eslint comment. Keys, nesting, parent page,
+and the string-equals-uid convention are all identical. Confirmed empirically too: records
+written by the old plugin, by the new plugin, and by this MCP all carry byte-identical
+props — `{discourse-graph: {sourceUid, destinationUid, hasSchema}}`, three keys, no more.
+
+**The update ran a backfill.** 34 new records appeared in a 16-second window on update,
+reifying previously inference-only edges (405 -> 439). It introduced no duplicates, no
+self-relations, and no dangling schemas. It did *not* clean up the 124 pre-existing
+dangling `hasSchema` records, so `stale_schema_records` stays necessary.
+
+A consequence worth noting: edges that used to read `origin: "inferred"` now read
+`origin: "both"`. Verified on a backfilled node — reported once each, not twice.
+
+**Add / read / remove all still work**, end to end, against the updated plugin: deleted a
+record written under the old plugin, re-created it under the new one, confirmed dedup and
+complement read-back.
+
+**Delete needs nothing more than deleting the block.** The extension's own delete path
+(`ResultsTable.tsx:265-311`) resolves the uid by props query, calls `deleteBlock`, and then
+only refreshes UI. No tombstone, no props clearing, no sync notification. The one caveat is
+an in-process, short-TTL, per-tab result cache — an external delete cannot touch it and
+does not need to; it self-expires.
+
+**No cross-app sync fires on write.** `discourseRelationDataToLocalConcept` exists but has
+zero callers; the Supabase layer is a 5-minute poll, not a write hook. So a Local-API write
+is behaviorally equivalent to a plugin write today. (`packages/database` was being
+refactored two commits before the checkout's HEAD, so re-check after a fetch.)
+
+### One fix this shook out
+
+`model.ts` matched relation blocks with `[?relPage :block/children ?rel]`. The extension
+matches with `:block/page` — any depth on the page. A record that ends up nested stays
+live to the plugin but was invisible to us. Fixed, with a test. Currently latent: both
+forms return 439 on sandbox-dg, so nothing was actually being missed.
+
+### Unresolved: `getInternalDiscourseConfig` is an N+1, and it now dominates every call
+
+Measured on sandbox-dg after the update: **~35s per MCP tool call**, of which ~35.7s is
+`getInternalDiscourseConfig` alone. The relation datalog itself is 16-45ms.
+
+```
+getConfigPageUid                   103ms     1 API call
+getBasicTreeByParentUid(config)  10406ms   712 API calls
+getNodePages                     25548ms  1518 API calls
+per-call Local API latency         35.2ms
+```
+
+`getBasicTreeByParentUidWithMeta` (`src/roam.ts:114`) recurses one datalog query per block.
+~2,230 round trips per tool invocation. The config did not grow — the update added just 2
+blocks to the config page — so what changed is per-call Local API latency (~35ms now), which
+multiplies the pre-existing N+1 into something that blows past the MCP SDK's 60s default
+request timeout. The stock `relations-smoke.ts` now dies partway through for this reason,
+not because of a relations bug.
+
+This is shared `main`-branch code used by every discourse tool, not just relations, so it
+wants its own change and its own test pass. The fix is to replace the level-by-level
+recursion with a single pull of the page's whole block tree.
+
+- [ ] Collapse `getBasicTreeByParentUid` / `getNodePages` to one query each
+- [ ] Cache `getInternalDiscourseConfig` per client for the life of a request
+- [ ] Raise the smoke script's client timeout above the 60s default

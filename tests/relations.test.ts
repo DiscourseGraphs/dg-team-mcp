@@ -58,6 +58,20 @@ test("no query returns a raw props map from :find", () => {
   }
 });
 
+test("relation blocks are matched at any depth on the page, as the plugin does", () => {
+  for (const q of [
+    ALL_RELATIONS_QUERY,
+    EXACT_TRIPLE_QUERY,
+    relationsBySideQuery("source"),
+    relationsBySideQuery("destination"),
+  ]) {
+    assert.match(q, /\[\?rel :block\/page \?relPage\]/);
+    // :block/children would hide any record that ends up nested, which the
+    // extension's own read path still returns.
+    assert.doesNotMatch(q, /\?relPage :block\/children/);
+  }
+});
+
 test("side queries anchor on the requested end and return the far one", () => {
   assert.match(relationsBySideQuery("source"), /\[:find \?relUid \?dst/);
   assert.match(relationsBySideQuery("source"), /\[\(= \?src \?target\)\]/);

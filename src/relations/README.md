@@ -38,8 +38,8 @@ resolution needs no new parser.
 1. **One direction only.** The complement is derived at query time. A stored
    reverse record double-counts the edge.
 2. **Dedup first.** `findExactRelation()` before every write. Duplicates already
-   exist in live graphs (`9BgaW-PkW` and `a8yvdCuqU` in sandbox-dg are the same
-   triple) — the extension is not a reliable guard.
+   exist in live graphs (`K8fAIwrqz` and `XTk0-7_rs` in sandbox-dg are the same
+   triple, both from Nov 2025) — the extension is not a reliable guard.
 3. **Roll back a failed two-step write.** Creation is `data.block.fromMarkdown`
    then `data.block.update`; if the update fails, delete the block. Live graphs
    carry orphans from interrupted writes (`T7M33Kmil` — uid-shaped string, no
@@ -52,6 +52,12 @@ resolution needs no new parser.
    configured discourse node type, and the pairing must be legal for the schema.
 6. **Never write anything but the relation block.** No touching user prose, no
    editing the grammar.
+7. **Write exactly these three keys — no more.** The extension's own dedup
+   (`strictQueryForReifiedBlocks`) post-filters on an *exact key count*, so a
+   record carrying an extra key does not match and the plugin will happily write
+   a duplicate alongside it. This is the constraint that blocks adding provenance
+   ("Joel says that x supports y") unilaterally: the schema change has to happen
+   on the extension side first.
 
 ## READ POLICY
 
@@ -67,6 +73,12 @@ resolution needs no new parser.
    silent drop would read as "this node has no relations".
 4. **Read regardless of the user's extension setting.** `use-reified-relations`
    gates the extension's own UI, not the data. The records are always there.
+5. **Match on `:block/page`, not `:block/children`.** The extension reads records
+   at any depth on the relations page, so a nested record (stray indent,
+   interrupted write) is still live to it. Matching only direct children would
+   make us blind to relations the plugin honors. Note the extension is itself
+   inconsistent here — `countReifiedRelations` counts direct children only, so
+   its own count can disagree with its own read.
 
 ## Files
 
