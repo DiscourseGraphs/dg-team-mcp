@@ -290,3 +290,34 @@ Internal tools are registered (Claude needs them) but documented separately.
 - Fire-and-forget proposals break the feedback loop
 
 **Trade-offs:** Requires Roam plugin installed. Plugin polls bridge every 1.2s (lightweight). Resolution tracking is in-memory (lost on server restart).
+
+---
+
+## ADR-020: One Query Per Subtree, and Never Trust `data.ai.search` for Discovery
+
+**Date:** 2026-07-27
+**Status:** Accepted
+
+*(Numbered 020 to leave 018/019 to the in-flight `discourse-relations` branch.)*
+
+**Context:** Every discourse tool loads the graph config first, and that load had become the whole cost of a tool call — ~35s against sandbox-dg, past the MCP SDK's 60s request timeout once two of them ran in one call. The relation datalog underneath it takes 16–45ms.
+
+The cause was structural, not incidental. `getBasicTreeByParentUidWithMeta` fetched one level of children per query and recursed, so reading a tree cost one round trip per block: 712 calls for the config page, 1,518 more for the node pages. At ~35ms per Local API call that is ~37s of pure latency. It had always been an N+1; it only became fatal when per-call latency rose.
+
+Investigating it turned up a second, worse problem. `getNodePages` discovered pages through `data.ai.search`, which caps its result page at 20 while reporting the real count in `total`. On dg-team that meant **20 of 27 node pages**, so Hypothesis, Experiment, Milestone, Opportunity, Experience, UserProfile and Initiative were invisible to every tool. sandbox-dg has 16 node pages — under the cap — which is exactly why the bug survived testing.
+
+**Decision:**
+1. Fetch a subtree in **one** query using `:block/parents` (transitive ancestors), joined to `:block/children` to recover each block's direct parent, and rebuild the nesting in JS (`assembleTree`).
+2. Discover node pages with Datalog over `:node/title`, prefix-filtered in JS, then fetch all their blocks in one collection-bound query.
+3. Memoise `getInternalDiscourseConfig` in a `WeakMap` keyed by client, which is per-request.
+
+**Why:**
+- Round trips, not query cost, were the bottleneck: 712 calls / 10,449ms became 1 call / 166ms on the same page, with byte-identical output.
+- Filtering titles in JS costs one query returning a few thousand short rows and removes the entire class of "predicate silently matched nothing". `clojure.string/starts-with?` does in fact work on both `data.fast.q` and `data.backend.q` (ARCHITECTURE.md said otherwise; it was wrong), but a predicate that quietly matches nothing here reads as *graph not configured* and degrades every tool to defaults. Not worth the trade.
+- Keying the cache on the client object rather than the graph name means it cannot go stale across requests. A grammar edit is picked up by the next tool call.
+
+**Verified:** against sandbox-dg and dg-team, old vs new deep-equal at depths 10/3/1/0, from both page roots and block roots, and across every shared node page. End to end: `get_discourse_node_types` ~35s → 538ms (sandbox) / 759ms (dg-team).
+
+**Trade-offs:** The subtree query returns all descendants and discards those past `maxDepth`, so a shallow read of a deep page fetches more rows than it uses — still one round trip instead of hundreds. Sibling order is now tie-broken by uid, because `:block/order` ties exist in live graphs and V8's stable sort was otherwise handing back whatever order Roam returned.
+
+**Consequence to expect:** dg-team tools now report 7 node types they previously omitted. That is a correction, but it changes output.

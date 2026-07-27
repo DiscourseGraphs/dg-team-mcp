@@ -111,6 +111,79 @@ const hasChildren = async (
   return rows.length > 0;
 };
 
+/** One row per block: the block itself plus the uid of its direct parent. */
+export type FlatBlock = {
+  uid: string;
+  text: string;
+  order: number;
+  parentUid: string;
+};
+
+// Every descendant of `uid`, at any depth, in ONE query.
+//
+// `:block/parents` is Roam's transitive-ancestor attribute, so it matches the
+// whole subtree in a single pass; `[?parent :block/children ?b]` then recovers
+// each block's *direct* parent so the tree can be reassembled locally. This
+// replaces a level-by-level recursion that issued one query per block — 712
+// round trips (~10s) for the discourse config page alone, against ~190ms here.
+//
+// Still simple Datalog with tuple bindings: no pull, no :keys — both silently
+// fail via the Local API.
+const descendantsQuery = (uid: string) => `[:find ?uid ?text ?order ?parentUid
+  :where
+  [?root :block/uid "${uid}"]
+  [?b :block/parents ?root]
+  [?b :block/uid ?uid]
+  [?b :block/string ?text]
+  [?b :block/order ?order]
+  [?parent :block/children ?b]
+  [?parent :block/uid ?parentUid]]`;
+
+/**
+ * Rebuild a tree from flat (block, parent) rows, walking down from `rootUid`.
+ *
+ * Blocks whose parent chain does not reach the root are dropped rather than
+ * reparented — the same blocks the level-by-level walk never reached, e.g. the
+ * children of a block that carries no `:block/string`.
+ */
+export function assembleTree(
+  rows: FlatBlock[],
+  rootUid: string,
+  maxDepth = DEFAULT_TREE_DEPTH,
+): { tree: TreeNode[]; truncated: boolean } {
+  const byParent = new Map<string, FlatBlock[]>();
+  for (const row of rows) {
+    if (row == null || row.uid == null || row.text == null) continue;
+    const siblings = byParent.get(row.parentUid);
+    if (siblings) siblings.push(row);
+    else byParent.set(row.parentUid, [row]);
+  }
+  // Sibling order can be genuinely tied — sandbox-dg has two blocks sharing an
+  // :block/order under the same parent. Break by uid so the same graph always
+  // comes back in the same order instead of following row order out of Roam.
+  for (const siblings of byParent.values()) {
+    siblings.sort(
+      (a, b) => (a.order ?? 0) - (b.order ?? 0) || a.uid.localeCompare(b.uid),
+    );
+  }
+
+  let truncated = false;
+  const build = (parentUid: string, depth: number): TreeNode[] => {
+    const children = byParent.get(parentUid) ?? [];
+    if (depth >= maxDepth) {
+      if (children.length) truncated = true;
+      return [];
+    }
+    return children.map((child) => ({
+      uid: child.uid,
+      text: child.text,
+      children: build(child.uid, depth + 1),
+    }));
+  };
+
+  return { tree: build(rootUid, 0), truncated };
+}
+
 export async function getBasicTreeByParentUidWithMeta(
   client: RoamClient,
   uid: string,
@@ -120,54 +193,30 @@ export async function getBasicTreeByParentUidWithMeta(
   truncated: boolean;
   maxDepth: number;
 }> {
-  // Use simple Datalog with tuple bindings (no pull, no :keys — both silently fail via Local API).
-  // Recursively fetch children level by level.
+  // Nothing to build, and the subtree query would be pure waste — ask the one
+  // question a zero-depth caller actually has.
   if (maxDepth <= 0) {
-    return {
-      tree: [],
-      truncated: await hasChildren(client, uid),
-      maxDepth,
-    };
+    return { tree: [], truncated: await hasChildren(client, uid), maxDepth };
   }
 
-  const children = await datalogQuery<[string, string, number]>(
+  const rows = await datalogQuery<[string, string, number, string]>(
     client,
-    `[:find ?text ?uid ?order
-      :where
-      [?parent :block/uid "${uid}"]
-      [?parent :block/children ?child]
-      [?child :block/string ?text]
-      [?child :block/uid ?uid]
-      [?child :block/order ?order]]`,
+    descendantsQuery(uid),
   );
-
-  const sorted = children
-    .filter((c) => c != null && c[0] != null)
-    .map(([text, uid, order]) => ({ text, uid, order }))
-    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-
-  // Recursively fetch children for each block
-  const nodes = await Promise.all(
-    sorted.map(async (child) => {
-      const subtree = await getBasicTreeByParentUidWithMeta(
-        client,
-        child.uid,
-        maxDepth - 1,
-      );
-      return {
-        uid: child.uid,
-        text: child.text,
-        children: subtree.tree,
-        truncated: subtree.truncated,
-      };
-    }),
-  );
-
-  return {
-    tree: nodes.map(({ truncated: _truncated, ...node }) => node),
-    truncated: nodes.some((node) => node.truncated),
+  const { tree, truncated } = assembleTree(
+    rows
+      .filter((r) => r != null)
+      .map(([blockUid, text, order, parentUid]) => ({
+        uid: blockUid,
+        text,
+        order,
+        parentUid,
+      })),
+    uid,
     maxDepth,
-  };
+  );
+
+  return { tree, truncated, maxDepth };
 }
 
 export async function getPageEditTime(
@@ -181,38 +230,74 @@ export async function getPageEditTime(
   return results[0]?.[0] ?? null;
 }
 
+const NODE_PAGE_PREFIX = "discourse-graph/nodes/";
+
+// Every page title in the graph. Deliberately unfiltered: the prefix match
+// happens in JS. `clojure.string/starts-with?` does work over the Local API
+// (verified on both `data.fast.q` and `data.backend.q`, contradicting the note
+// in ARCHITECTURE.md), but the cost of being wrong here is total — a predicate
+// that quietly matches nothing makes the graph look unconfigured and silently
+// degrades every discourse tool to defaults. A few thousand titles is a cheap
+// price for having no predicate to be wrong about.
+const ALL_PAGE_TITLES_QUERY = `[:find ?uid ?title
+  :where
+  [?p :node/title ?title]
+  [?p :block/uid ?uid]]`;
+
+// Every block on the given pages, tagged with the page it belongs to, in one
+// query. `:block/page` is the direct page pointer (so it doubles as the group
+// key); the parent join is what makes the rows reassemblable into trees. The
+// page set arrives as a collection binding — also verified on both actions.
+const NODE_PAGE_BLOCKS_QUERY = `[:find ?pageUid ?uid ?text ?order ?parentUid
+  :in $ [?pageUid ...]
+  :where
+  [?page :block/uid ?pageUid]
+  [?b :block/page ?page]
+  [?b :block/uid ?uid]
+  [?b :block/string ?text]
+  [?b :block/order ?order]
+  [?parent :block/children ?b]
+  [?parent :block/uid ?parentUid]]`;
+
 export async function getNodePages(
   client: RoamClient,
 ): Promise<Map<string, { text: string; children: TreeNode[] }>> {
-  // Use Roam's search API (data.ai.search) instead of Datalog.
-  // Response format: { total, results: [{ uid, markdown, type? }] }
-  type SearchResponse = {
-    total: number;
-    results: Array<{ uid: string; markdown: string; type?: string }>;
-  };
-  const response = await client.call<SearchResponse>("data.ai.search", [
-    { query: "discourse-graph/nodes/", scope: "pages" },
-  ]);
-  const searchResults = response.result?.results ?? [];
+  // Two queries rather than one per page. They stay separate because a node
+  // page with no blocks yet still has to appear in the result, and a join on
+  // blocks would silently drop it.
+  //
+  // This used to go through `data.ai.search` and parse the title back out of
+  // the returned markdown. That API caps its result page: on dg-team it
+  // reported total=27 and returned 20, so seven node types — Hypothesis,
+  // Experiment, Milestone, Opportunity, Experience, UserProfile, Initiative —
+  // were invisible to every tool. Sandbox has 16 node pages, under the cap,
+  // which is why it never showed up in testing.
+  const pages = (await datalogQuery<[string, string]>(client, ALL_PAGE_TITLES_QUERY))
+    .filter((row) => row?.[0] && row[1]?.startsWith(NODE_PAGE_PREFIX))
+    .map(([uid, title]) => ({ uid, text: title.substring(NODE_PAGE_PREFIX.length) }));
 
-  // Extract title from markdown: "# discourse-graph/nodes/Claim <roam uid=...>"
-  const titleFromMarkdown = (md: string): string => {
-    const match = md.match(/^#\s+(.+?)(?:\s*<roam|$)/);
-    return match?.[1] ?? "";
-  };
+  if (!pages.length) return new Map();
 
-  const pages = searchResults
-    .filter((r) => r != null && r.uid)
-    .map((r) => ({ title: titleFromMarkdown(r.markdown), uid: r.uid }))
-    .filter((p) => p.title.startsWith("discourse-graph/nodes/"));
-
-  const nodes = new Map<string, { text: string; children: TreeNode[] }>();
-  await Promise.all(
-    pages.map(async (page) => {
-      const children = await getBasicTreeByParentUid(client, page.uid);
-      const text = page.title.substring("discourse-graph/nodes/".length);
-      nodes.set(page.uid, { text, children });
-    }),
+  const blocks = await datalogQuery<[string, string, string, number, string]>(
+    client,
+    NODE_PAGE_BLOCKS_QUERY,
+    pages.map((p) => p.uid),
   );
-  return nodes;
+
+  const blocksByPage = new Map<string, FlatBlock[]>();
+  for (const row of blocks) {
+    if (row == null) continue;
+    const [pageUid, uid, text, order, parentUid] = row;
+    const block = { uid, text, order, parentUid };
+    const onPage = blocksByPage.get(pageUid);
+    if (onPage) onPage.push(block);
+    else blocksByPage.set(pageUid, [block]);
+  }
+
+  return new Map(
+    pages.map(({ uid, text }) => [
+      uid,
+      { text, children: assembleTree(blocksByPage.get(uid) ?? [], uid).tree },
+    ]),
+  );
 }
