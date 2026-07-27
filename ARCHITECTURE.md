@@ -87,13 +87,16 @@ The extension code uses `window.roamAlphaAPI` (browser context). The Local API e
 ### What Works
 | API | Use Case |
 |---|---|
-| `data.ai.search` | Page/block search. Returns `{ total, results: [{ uid, markdown }] }` |
+| `data.ai.search` | Page/block search. Returns `{ total, results: [{ uid, markdown }] }` — **capped at 20 results**; compare `results.length` against `total` before trusting it |
 | `data.ai.getPage` | Get page by title/uid. Returns `{ uid, markdown }` |
 | `data.ai.getBlock` | Get block by uid. Returns `{ uid, markdown, path }` |
 | Simple Datalog (tuple results) | `[:find ?var1 ?var2 :where ...]` — works reliably |
 | Datalog with `get-else` | Default value fallback — works |
 | Datalog with `:in` params | Parameterized queries — works |
 | Datalog with `>`, `<` | Numeric comparison — works |
+| Datalog collection binding | `:in $ [?uid ...]` with an array argument — works |
+| `:block/parents` | Transitive ancestors — a whole subtree in one query |
+| `clojure.string/starts-with?` | Works (see below — this table used to say otherwise) |
 
 ### What Does NOT Work
 | API / Feature | Failure Mode |
@@ -101,14 +104,14 @@ The extension code uses `window.roamAlphaAPI` (browser context). The Local API e
 | `(pull ?x [...])` in `:find` | Silently returns empty |
 | `:keys` syntax | Silently returns empty |
 | `clojure.string/lower-case` | `Unknown function` error |
-| `clojure.string/starts-with?` | Silently returns empty |
+| `starts-with?` (unqualified) | `Unknown predicate` error — must be namespaced |
 | `clojure.string/includes?` | Unsafe / avoided in current implementation |
 | `re-pattern` / `re-find` in Datalog | Works |
 | `data.fast.q` action | May not be available (falls back to `data.backend.q`) |
 
 ### Our Workarounds
-1. **Page discovery:** Use `data.ai.search` instead of Datalog prefix queries
-2. **Block trees:** Recursive simple Datalog (one query per level, no `pull`), with truncation metadata for deep trees
+1. **Page discovery:** Datalog over `:node/title`, filtered in JS. `data.ai.search` is *not* safe for discovery — it caps at 20 results and reports the true count in `total`, so it silently returned 20 of dg-team's 27 node pages (see ADR-020)
+2. **Block trees:** One Datalog query per subtree via `:block/parents`, reassembled locally from parent links, with truncation metadata for deep trees
 3. **Text matching:** Use `re-pattern` / `re-find` in Datalog where possible, JS filtering otherwise
 4. **Page UIDs:** Use `data.ai.getPage` instead of Datalog lookups
 5. **All query results:** Use tuple format `[:find ?a ?b :where ...]`, map to objects in JS — never use `:keys` or `pull`
@@ -267,7 +270,13 @@ Most tools go through `withClient()` which handles graph resolution, client crea
 Tries `data.fast.q`, falls back to `data.backend.q` on "Unknown action" error. All results get null-filtered before property access. Uses tuple format only (no `:keys`).
 
 ### `getBasicTreeByParentUid` / `getBasicTreeByParentUidWithMeta` (roam.ts)
-Recursive Datalog — fetches one level of children at a time, sorts by `:block/order`, recurses up to `DEFAULT_TREE_DEPTH=10` by default. `getBasicTreeByParentUidWithMeta` also returns `truncated` metadata so tools can explicitly report when a page hit the depth cap instead of silently returning partial trees.
+**One** Datalog query per subtree: `:block/parents` matches every descendant at any depth, and a `:block/children` join carries each block's direct parent so `assembleTree()` can rebuild the nesting locally. Sorted by `:block/order`, tie-broken by uid (ties do occur), capped at `DEFAULT_TREE_DEPTH=10`. `getBasicTreeByParentUidWithMeta` also returns `truncated` metadata so tools can explicitly report when a page hit the depth cap instead of silently returning partial trees. `maxDepth <= 0` skips the subtree query entirely and asks only whether children exist.
+
+### `getNodePages` (roam.ts)
+Two queries total regardless of how many node pages exist: all page titles (filtered to the `discourse-graph/nodes/` prefix in JS), then every block on those pages via a collection binding. Pages are listed independently of blocks so an empty node page still appears.
+
+### `getInternalDiscourseConfig` (discourse-config.ts)
+Memoised in a `WeakMap` keyed by the `RoamClient`. `createClient()` mints a client per tool call, so this deduplicates within one request and never caches across them — a grammar edit is visible to the next call rather than sitting behind a TTL.
 
 ### `getPageEditTime` (roam.ts)
 Simple Datalog query for `:edit/time` attribute. Used by indexing tools for staleness detection.

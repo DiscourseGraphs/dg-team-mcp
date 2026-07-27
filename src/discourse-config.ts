@@ -194,11 +194,13 @@ const dedupeRelations = (
     });
 };
 
-export const getInternalDiscourseConfig = async (
+const loadInternalDiscourseConfig = async (
   client: RoamClient,
 ): Promise<InternalDiscourseConfigResult> => {
-  const nodePages = await getNodePages(client);
-  const configUid = await getConfigPageUid(client);
+  const [nodePages, configUid] = await Promise.all([
+    getNodePages(client),
+    getConfigPageUid(client),
+  ]);
   const configTree = configUid
     ? await getBasicTreeByParentUid(client, configUid)
     : [];
@@ -206,6 +208,29 @@ export const getInternalDiscourseConfig = async (
   const nodes = parseNodes(nodePages, parsedRelations);
   const configured = configUid !== undefined && nodePages.size > 0;
   return { configured, nodes, relations: parsedRelations };
+};
+
+// One config load per client. `createClient()` mints a fresh client for every
+// tool call, so this memoises within a single request and never across them:
+// a grammar edit is picked up by the next call rather than sitting behind a
+// TTL. Several tools ask for the config more than once per request.
+const configByClient = new WeakMap<
+  RoamClient,
+  Promise<InternalDiscourseConfigResult>
+>();
+
+export const getInternalDiscourseConfig = (
+  client: RoamClient,
+): Promise<InternalDiscourseConfigResult> => {
+  const inFlight = configByClient.get(client);
+  if (inFlight) return inFlight;
+
+  const loading = loadInternalDiscourseConfig(client);
+  configByClient.set(client, loading);
+  // Never cache a rejection — one transient API failure must not poison every
+  // later call in the same request.
+  loading.catch(() => configByClient.delete(client));
+  return loading;
 };
 
 export const getDiscourseNodeTypes = async (
