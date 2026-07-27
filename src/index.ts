@@ -2,6 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { getMcpConfig, RoamClient, tools as roamTools, routeToolCall } from "@roam-research/roam-tools-local";
 import { RoamError } from "@roam-research/roam-tools-core";
 import { createClient } from "./roam.js";
@@ -121,14 +122,7 @@ const CREATE_BLOCK_PREFERENCE_NOTE =
   "Roam-side target visibility first, prefer propose_write_batch " +
   "(or propose_write for a single branch).";
 
-type ToolContent =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string };
-
-type ToolResult = {
-  content: ToolContent[];
-  isError?: boolean;
-};
+type ToolResult = CallToolResult;
 
 // ── Auto-loaded graph guidelines ──
 // Fetched once per graph on first tool call, prepended to the response.

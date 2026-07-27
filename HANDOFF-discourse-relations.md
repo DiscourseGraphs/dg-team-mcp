@@ -151,9 +151,10 @@ silence — a bare "21 relations" would badly misrepresent that node.
 
 `getInternalDiscourseConfig()` returns **each relation definition more than once**
 (one entry per triple set). sandbox-dg's two "Supports" definitions come back as four
-entries. Any code matching on relation identity must call `getDedupedRelations()`
-first — without it, pinning an unambiguous `relation_schema_uid` *still* resolves to
-multiple candidates and the tool refuses a request it should have accepted.
+entries. Any code matching on relation identity must call `dedupeRelations()`
+(exported by `discourse-config.ts`) first — without it, pinning an unambiguous
+`relation_schema_uid` *still* resolves to multiple candidates and the tool
+refuses a request it should have accepted.
 `get-relationships.ts` had always done this; the new create tool initially did not,
 and the smoke script caught it.
 

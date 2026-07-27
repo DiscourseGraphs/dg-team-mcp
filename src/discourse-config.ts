@@ -174,25 +174,30 @@ const toPublicNodeType = ({
   ...node
 }: InternalDiscourseNodeType): DiscourseNodeType => node;
 
-const dedupeRelations = (
-  relations: InternalDiscourseRelationType[],
-): DiscourseRelationType[] => {
-  const seen = new Set<string>();
-  return relations
-    .map(({ triples: _triples, ...relation }) => relation)
-    .filter((relation) => {
-      const key = [
-        relation.id,
-        relation.label,
-        relation.source,
-        relation.destination,
-        relation.complement,
-      ].join("::");
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-};
+/**
+ * The parsed config yields the same relation definition more than once (each
+ * grammar entry surfaces once per triple set — load-bearing for the query
+ * translators, so `getInternalDiscourseConfig` returns the raw list). Any
+ * consumer matching by definition must dedupe first, or a uniquely-identified
+ * relation still looks ambiguous.
+ */
+export const dedupeRelations = <T extends DiscourseRelationType>(
+  relations: T[],
+): T[] =>
+  Array.from(
+    new Map(
+      relations.map((relation) => [
+        [
+          relation.id,
+          relation.label,
+          relation.source,
+          relation.destination,
+          relation.complement,
+        ].join("::"),
+        relation,
+      ]),
+    ).values(),
+  );
 
 const loadInternalDiscourseConfig = async (
   client: RoamClient,
@@ -240,6 +245,8 @@ export const getDiscourseNodeTypes = async (
   return {
     configured: internal.configured,
     nodes: internal.nodes.map(toPublicNodeType),
-    relations: dedupeRelations(internal.relations),
+    relations: dedupeRelations(internal.relations).map(
+      ({ triples: _triples, ...relation }) => relation,
+    ),
   };
 };

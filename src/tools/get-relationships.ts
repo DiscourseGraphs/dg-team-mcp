@@ -10,14 +10,14 @@
 import { z } from "zod";
 import type { RoamClient } from "@roam-research/roam-tools-local";
 import compileDatalog from "../query/compile-datalog.js";
-import { getInternalDiscourseConfig } from "../discourse-config.js";
+import { dedupeRelations, getInternalDiscourseConfig } from "../discourse-config.js";
 import { discourseNodeToDatalog } from "../query/discourse-node-utils.js";
 import { fireQueryDetailed } from "../query/fire-query.js";
 import { registerDiscourseTranslators } from "../query/register-discourse-translators.js";
 import type { Result as QueryResult } from "../query/types.js";
 import { datalogQuery } from "../roam.js";
 import { getStoredRelationsForNode } from "../relations/read.js";
-import type { ResolvedStoredRelation } from "../relations/model.js";
+import { mergeStoredRelations } from "../relations/merge.js";
 import getDiscourseNodeFormatExpression from "../format-expression.js";
 import type {
   InternalDiscourseNodeType,
@@ -233,28 +233,6 @@ const buildSelections = (
   return [];
 };
 
-/**
- * The parsed config yields the same relation definition more than once (each
- * grammar entry surfaces once per triple set), so every consumer must dedupe
- * before matching — otherwise a uniquely-identified relation still looks
- * ambiguous.
- */
-export const getDedupedRelations = (relations: InternalDiscourseRelationType[]) =>
-  Array.from(
-    new Map(
-      relations.map((relation) => [
-        [
-          relation.id,
-          relation.label,
-          relation.source,
-          relation.destination,
-          relation.complement,
-        ].join("::"),
-        relation,
-      ]),
-    ).values(),
-  );
-
 const runWithConcurrencyLimit = async <T,>(
   items: T[],
   limit: number,
@@ -269,64 +247,6 @@ const runWithConcurrencyLimit = async <T,>(
     }
   });
   await Promise.all(runners);
-};
-
-type RelationGroup = {
-  relation: string;
-  direction: "forward" | "complement";
-  results: Array<QueryResult & { origin: string; relation_uid?: string }>;
-};
-
-/**
- * Union the two ways a relation can exist in a graph: matched by the grammar's
- * triple pattern ("inferred"), or written as an explicit record ("stored").
- * A node reached both ways is reported once, tagged "both" — the same edge, not
- * two edges. Callers need the distinction because only stored edges have a
- * relation_uid that can be edited or deleted.
- */
-export const mergeStoredRelations = (
-  inferred: Array<{
-    relation: string;
-    direction: "forward" | "complement";
-    results: QueryResult[];
-  }>,
-  stored: ResolvedStoredRelation[],
-): RelationGroup[] => {
-  const keyOf = (relation: string, direction: string) =>
-    `${relation}::${direction}`;
-  const grouped = new Map<string, RelationGroup>();
-
-  for (const group of inferred) {
-    grouped.set(keyOf(group.relation, group.direction), {
-      relation: group.relation,
-      direction: group.direction,
-      results: group.results.map((r) => ({ ...r, origin: "inferred" })),
-    });
-  }
-
-  for (const rel of stored) {
-    const key = keyOf(rel.label, rel.direction);
-    const group = grouped.get(key) ?? {
-      relation: rel.label,
-      direction: rel.direction,
-      results: [],
-    };
-    const hit = group.results.find((r) => r.uid === rel.targetUid);
-    if (hit) {
-      hit.origin = "both";
-      hit.relation_uid = rel.relationUid;
-    } else {
-      group.results.push({
-        uid: rel.targetUid,
-        text: rel.targetTitle,
-        origin: "stored",
-        relation_uid: rel.relationUid,
-      });
-    }
-    grouped.set(key, group);
-  }
-
-  return [...grouped.values()].filter((g) => g.results.length > 0);
 };
 
 export const handleGetRelationships = async (
@@ -372,7 +292,7 @@ export const handleGetRelationships = async (
       };
     }
 
-    const relevantRelations = getDedupedRelations(config.relations).flatMap((r) => {
+    const relevantRelations = dedupeRelations(config.relations).flatMap((r) => {
       const matches: Array<{
         relation: InternalDiscourseRelationType;
         direction: "forward" | "complement";

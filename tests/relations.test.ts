@@ -6,7 +6,7 @@ import {
   relationsBySideQuery,
   type ResolvedStoredRelation,
 } from "../src/relations/model.js";
-import { mergeStoredRelations } from "../src/tools/get-relationships.js";
+import { mergeStoredRelations } from "../src/relations/merge.js";
 import type { Result as QueryResult } from "../src/query/types.js";
 
 const stored = (

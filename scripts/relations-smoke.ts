@@ -8,10 +8,10 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { RoamClient, resolveGraph, getPort } from "@roam-research/roam-tools-local";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { deleteStoredRelation } from "../src/relations/write.js";
+import { createClient } from "../src/roam.js";
 
 const graph = process.argv[2] ?? "sandbox-dg";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -125,10 +125,7 @@ check("newly written relation is readable back through get_relationships", sawIt
 
 // ── cleanup ───────────────────────────────────────────────────────────────
 if (created.relation_uid) {
-  const resolved = await resolveGraph(graph);
-  const direct = new RoamClient({
-    graphName: resolved.name, graphType: resolved.type, token: resolved.token, port: await getPort(),
-  });
+  const { client: direct } = await createClient(graph);
   await deleteStoredRelation(direct, created.relation_uid);
   console.log(`cleaned up ${created.relation_uid}`);
 }

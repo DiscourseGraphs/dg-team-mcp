@@ -102,12 +102,8 @@ export const getStoredRelationsForNode = async (
     // Self-referential records carry no information for the caller.
     if (row.targetUid === uid) continue;
     resolved.push({
-      relationUid: row.relationUid,
+      ...row,
       label: row.direction === "forward" ? schema.label : schema.complement,
-      direction: row.direction,
-      targetUid: row.targetUid,
-      targetTitle: row.targetTitle,
-      hasSchema: row.hasSchema,
     });
   }
 

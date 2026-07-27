@@ -136,7 +136,8 @@ src/
 ├── relations/                        # Stored (reified) discourse relations — see its README
 │   ├── model.ts                      #   contract: constants, types, every datalog query
 │   ├── read.ts                       #   relations for a node; exact-triple lookup for dedup
-│   └── write.ts                      #   two-step create primitive, with rollback
+│   ├── write.ts                      #   idempotent ensure over the two-step create, with rollback
+│   └── merge.ts                      #   inferred/stored union with origin tagging
 ├── discourse-config.ts               # Config parsing (node types + relations)
 ├── tree-utils.ts                     # Pure utils (from roamjs-components)
 ├── defaults.ts                       # Default nodes + relations

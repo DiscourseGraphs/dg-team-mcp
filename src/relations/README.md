@@ -37,9 +37,10 @@ resolution needs no new parser.
 
 1. **One direction only.** The complement is derived at query time. A stored
    reverse record double-counts the edge.
-2. **Dedup first.** `findExactRelation()` before every write. Duplicates already
-   exist in live graphs (`K8fAIwrqz` and `XTk0-7_rs` in sandbox-dg are the same
-   triple, both from Nov 2025) — the extension is not a reliable guard.
+2. **Dedup first.** Enforced in the module: `ensureStoredRelation()` (the only
+   exported create path) checks `findExactRelation()` before writing. Duplicates
+   already exist in live graphs (`K8fAIwrqz` and `XTk0-7_rs` in sandbox-dg are
+   the same triple, both from Nov 2025) — the extension is not a reliable guard.
 3. **Roll back a failed two-step write.** Creation is `data.block.fromMarkdown`
    then `data.block.update`; if the update fails, delete the block. Live graphs
    carry orphans from interrupted writes (`T7M33Kmil` — uid-shaped string, no
@@ -84,7 +85,8 @@ resolution needs no new parser.
 
 - `model.ts` — the contract: constants, types, and every datalog query
 - `read.ts` — stored relations for a node, and exact-triple lookup for dedup
-- `write.ts` — the two-step create primitive, with rollback
+- `write.ts` — idempotent `ensureStoredRelation` over the two-step create, with rollback
+- `merge.ts` — the inferred/stored union with `origin` tagging
 
 Tool surface: `get_relationships` (read, always on) and
 `create_discourse_relation` (write, gated behind `DG_MCP_RELATION_WRITE`).

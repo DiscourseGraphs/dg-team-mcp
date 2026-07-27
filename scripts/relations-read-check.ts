@@ -1,17 +1,15 @@
 // Read-only validation of the stored-relation read path against any graph.
 // Makes NO writes. Run: npx tsx scripts/relations-read-check.ts [graph]
-import { RoamClient, resolveGraph, getPort } from "@roam-research/roam-tools-local";
-import { getInternalDiscourseConfig } from "../src/discourse-config.js";
+import { dedupeRelations, getInternalDiscourseConfig } from "../src/discourse-config.js";
 import { getAllStoredRelations, getStoredRelationsForNode } from "../src/relations/read.js";
-import { getDedupedRelations } from "../src/tools/get-relationships.js";
+import { createClient } from "../src/roam.js";
 
 const graph = process.argv[2] ?? "dg-team";
-const r = await resolveGraph(graph);
-const client = new RoamClient({ graphName: r.name, graphType: r.type, token: r.token, port: await getPort() });
+const { client, nickname } = await createClient(graph);
 
 const cfg = await getInternalDiscourseConfig(client);
-const relations = getDedupedRelations(cfg.relations);
-console.log(`graph=${r.nickname}  node types=${cfg.nodes.length}  relation defs=${relations.length} (raw ${cfg.relations.length})`);
+const relations = dedupeRelations(cfg.relations);
+console.log(`graph=${nickname}  node types=${cfg.nodes.length}  relation defs=${relations.length} (raw ${cfg.relations.length})`);
 
 const all = await getAllStoredRelations(client);
 console.log(`stored relation records: ${all.length}`);

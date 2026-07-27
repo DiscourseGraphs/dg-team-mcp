@@ -8,21 +8,12 @@
 
 import type { RoamClient } from "@roam-research/roam-tools-local";
 import { getPageUidByTitle } from "../roam.js";
+import { findExactRelation } from "./read.js";
 import {
   DISCOURSE_GRAPH_PROP,
   RELATIONS_PAGE_TITLE,
   type StoredRelation,
 } from "./model.js";
-
-/** Roam's uid alphabet; 9 chars, matching window.roamAlphaAPI.util.generateUID(). */
-const UID_ALPHABET =
-  "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
-
-const generateUid = (): string =>
-  Array.from(
-    { length: 9 },
-    () => UID_ALPHABET[Math.floor(Math.random() * UID_ALPHABET.length)],
-  ).join("");
 
 /**
  * Resolve the relations page, creating it if the graph has never stored one.
@@ -35,22 +26,32 @@ export const resolveRelationsPageUid = async (
   const existing = await getPageUidByTitle(client, RELATIONS_PAGE_TITLE);
   if (existing) return existing;
 
-  const uid = generateUid();
   await client.call("data.page.fromMarkdown", [
-    { page: { title: RELATIONS_PAGE_TITLE, uid }, "markdown-string": "" },
+    { page: { title: RELATIONS_PAGE_TITLE }, "markdown-string": "" },
   ]);
   const created = await getPageUidByTitle(client, RELATIONS_PAGE_TITLE);
-  return created ?? uid;
+  if (!created) {
+    throw new Error(`Could not create the "${RELATIONS_PAGE_TITLE}" page.`);
+  }
+  return created;
+};
+
+/** Delete a stored relation block. Used by the smoke script and for rollback. */
+export const deleteStoredRelation = async (
+  client: RoamClient,
+  relationUid: string,
+): Promise<void> => {
+  await client.call("data.block.delete", [{ block: { uid: relationUid } }]);
 };
 
 /**
- * Write one directed relation record. Callers are responsible for dedup and for
- * validating that `hasSchema` resolves — this is the mutation primitive only.
+ * Write one directed relation record. Callers are responsible for validating
+ * that `hasSchema` resolves — this is the mutation primitive only.
  *
  * Never write the complement as a second record: the extension resolves reverse
  * direction at query time, and a stored complement would double-count.
  */
-export const createStoredRelation = async (
+const createStoredRelation = async (
   client: RoamClient,
   triple: Omit<StoredRelation, "relationUid">,
 ): Promise<string> => {
@@ -91,19 +92,23 @@ export const createStoredRelation = async (
     ]);
   } catch (error) {
     // Roll back rather than leave a props-less orphan on the relations page.
-    await client
-      .call("data.block.delete", [{ block: { uid } }])
-      .catch(() => undefined);
+    await deleteStoredRelation(client, uid).catch(() => undefined);
     throw error;
   }
 
   return uid;
 };
 
-/** Delete a stored relation block. Used by the smoke script and for rollback. */
-export const deleteStoredRelation = async (
+/**
+ * The write entry point: returns the existing record when the exact directed
+ * triple is already stored, and writes it otherwise. Dedup-before-write is
+ * module policy (README #2), enforced here rather than left to callers.
+ */
+export const ensureStoredRelation = async (
   client: RoamClient,
-  relationUid: string,
-): Promise<void> => {
-  await client.call("data.block.delete", [{ block: { uid: relationUid } }]);
+  triple: Omit<StoredRelation, "relationUid">,
+): Promise<{ created: boolean; relationUid: string }> => {
+  const existing = await findExactRelation(client, triple);
+  if (existing) return { created: false, relationUid: existing };
+  return { created: true, relationUid: await createStoredRelation(client, triple) };
 };

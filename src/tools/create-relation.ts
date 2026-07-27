@@ -9,15 +9,13 @@
 
 import { z } from "zod";
 import type { RoamClient } from "@roam-research/roam-tools-local";
-import { getInternalDiscourseConfig } from "../discourse-config.js";
+import { errorResult, textResult } from "@roam-research/roam-tools-core";
+import { dedupeRelations, getInternalDiscourseConfig } from "../discourse-config.js";
 import { datalogQuery } from "../roam.js";
 import type { InternalDiscourseRelationType } from "../types.js";
-import {
-  findDiscourseNodeType,
-  getDedupedRelations,
-} from "./get-relationships.js";
+import { findDiscourseNodeType } from "./get-relationships.js";
 import { findExactRelation } from "../relations/read.js";
-import { createStoredRelation } from "../relations/write.js";
+import { ensureStoredRelation } from "../relations/write.js";
 
 export const CreateRelationSchema = z.object({
   graph: z.string().optional().describe("Graph name or nickname."),
@@ -53,15 +51,6 @@ export const createRelationDescription =
   "must not be created separately. Validates that the relation is legal " +
   "between the two node types, and is a no-op if the relation already exists. " +
   "Use dry_run to preview the resolution first.";
-
-const err = (text: string) => ({
-  content: [{ type: "text" as const, text }],
-  isError: true,
-});
-
-const ok = (payload: unknown) => ({
-  content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
-});
 
 const eq = (a: string, b: string) =>
   a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -110,20 +99,25 @@ export const handleCreateRelation = async (
   } = args;
 
   if (sourceUid === destinationUid) {
-    return err(
+    return errorResult(
       `Refusing to relate ${sourceUid} to itself. Source and destination must differ.`,
     );
   }
 
-  const rawConfig = await getInternalDiscourseConfig(client);
-  // The parsed config repeats each definition; without this, pinning an
-  // unambiguous relation_schema_uid still resolves to multiple candidates.
-  const config = {
-    ...rawConfig,
-    relations: getDedupedRelations(rawConfig.relations),
-  };
-  if (!config.relations.length) {
-    return err(
+  // Both endpoints must exist as blocks/pages in the graph; the check depends
+  // only on the args, so it runs alongside the config fetch.
+  const [config, present] = await Promise.all([
+    getInternalDiscourseConfig(client),
+    datalogQuery<[string]>(
+      client,
+      `[:find ?uid :in $ [?uid ...] :where [?b :block/uid ?uid]]`,
+      [sourceUid, destinationUid],
+    ),
+  ]);
+
+  const relationDefs = dedupeRelations(config.relations);
+  if (!relationDefs.length) {
+    return errorResult(
       "This graph has no discourse relation types configured under " +
         "roam/js/discourse-graph > grammar > relations, so no relation can be created.",
     );
@@ -134,16 +128,10 @@ export const handleCreateRelation = async (
       ? "Any"
       : config.nodes.find((n) => n.typeId === typeId)?.name || typeId;
 
-  // Both endpoints must exist as blocks/pages in the graph.
-  const present = await datalogQuery<[string]>(
-    client,
-    `[:find ?uid :in $ [?uid ...] :where [?b :block/uid ?uid]]`,
-    [sourceUid, destinationUid],
-  );
   const found = new Set(present.map(([u]) => u));
   const missing = [sourceUid, destinationUid].filter((u) => !found.has(u));
   if (missing.length) {
-    return err(`No such uid in this graph: ${missing.join(", ")}`);
+    return errorResult(`No such uid in this graph: ${missing.join(", ")}`);
   }
 
   const [sourceType, destinationType] = await Promise.all([
@@ -156,7 +144,7 @@ export const handleCreateRelation = async (
     ...(destinationType ? [] : [`destination ${destinationUid}`]),
   ];
   if (untyped.length) {
-    return err(
+    return errorResult(
       `Not a recognized discourse node: ${untyped.join(", ")}. ` +
         "Relations can only connect nodes whose titles match a configured " +
         "discourse node type.",
@@ -164,9 +152,12 @@ export const handleCreateRelation = async (
   }
 
   // Match on the forward label, and on the complement label with flipped
-  // endpoints, always checking the declared endpoint types.
+  // endpoints, always checking the declared endpoint types. (Read-side
+  // counterpart: register-discourse-translators.ts does the same label +
+  // declared-type matching, but case-sensitively — keep them in sight of each
+  // other if either changes.)
   const candidates: Candidate[] = [];
-  for (const relation of config.relations) {
+  for (const relation of relationDefs) {
     if (
       eq(relation.label, label) &&
       typeMatches(relation.source, sourceType) &&
@@ -189,33 +180,33 @@ export const handleCreateRelation = async (
     : candidates;
 
   if (!narrowed.length) {
-    const sameLabel = config.relations.filter(
+    if (schemaUid) {
+      return errorResult(
+        `relation_schema_uid ${schemaUid} does not match a "${label}" relation valid between these node types.`,
+      );
+    }
+    const sameLabel = relationDefs.filter(
       (r) => eq(r.label, label) || (r.complement && eq(r.complement, label)),
     );
-    const detail = sameLabel.length
-      ? `"${label}" exists in the grammar but not between ${nodeName(
-          sourceType!,
-        )} and ${nodeName(destinationType!)}. Defined as: ` +
-        JSON.stringify(
-          sameLabel.map((r) => ({
-            label: r.label,
-            source_type: nodeName(r.source),
-            destination_type: nodeName(r.destination),
-          })),
-        )
-      : `No relation labelled "${label}" in this graph. Available: ` +
-        JSON.stringify([
-          ...new Set(config.relations.map((r) => r.label)),
-        ]);
-    return err(
-      schemaUid
-        ? `relation_schema_uid ${schemaUid} does not match a "${label}" relation valid between these node types.`
-        : detail,
+    return errorResult(
+      sameLabel.length
+        ? `"${label}" exists in the grammar but not between ${nodeName(
+            sourceType!,
+          )} and ${nodeName(destinationType!)}. Defined as: ` +
+            JSON.stringify(
+              sameLabel.map((r) => ({
+                label: r.label,
+                source_type: nodeName(r.source),
+                destination_type: nodeName(r.destination),
+              })),
+            )
+        : `No relation labelled "${label}" in this graph. Available: ` +
+            JSON.stringify([...new Set(relationDefs.map((r) => r.label))]),
     );
   }
 
   if (narrowed.length > 1) {
-    return err(
+    return errorResult(
       `"${label}" is ambiguous between ${nodeName(sourceType!)} and ${nodeName(
         destinationType!,
       )} — this graph defines it ${narrowed.length} times. ` +
@@ -230,46 +221,46 @@ export const handleCreateRelation = async (
 
   const chosen = narrowed[0];
   // The stored record is always written in the schema's own direction.
-  const triple =
+  const [recordSource, recordDestination] =
     chosen.orientation === "forward"
-      ? {
-          sourceUid,
-          destinationUid,
-          hasSchema: chosen.relation.id,
-        }
-      : {
-          sourceUid: destinationUid,
-          destinationUid: sourceUid,
-          hasSchema: chosen.relation.id,
-        };
+      ? [sourceUid, destinationUid]
+      : [destinationUid, sourceUid];
+  const triple = {
+    sourceUid: recordSource,
+    destinationUid: recordDestination,
+    hasSchema: chosen.relation.id,
+  };
 
-  const existing = await findExactRelation(client, triple);
-  if (existing) {
-    return ok({
-      created: false,
-      reason: "already_exists",
-      relation_uid: existing,
-      ...triple,
-      label: chosen.relation.label,
-    });
-  }
+  const alreadyExists = (relationUid: string) => ({
+    created: false,
+    reason: "already_exists",
+    relation_uid: relationUid,
+    ...triple,
+    label: chosen.relation.label,
+  });
 
   if (dryRun) {
-    return ok({
-      created: false,
-      reason: "dry_run",
-      would_write: {
-        ...triple,
-        label: chosen.relation.label,
-        source_type: nodeName(chosen.relation.source),
-        destination_type: nodeName(chosen.relation.destination),
-      },
-    });
+    const existing = await findExactRelation(client, triple);
+    return textResult(
+      existing
+        ? alreadyExists(existing)
+        : {
+            created: false,
+            reason: "dry_run",
+            would_write: {
+              ...triple,
+              label: chosen.relation.label,
+              source_type: nodeName(chosen.relation.source),
+              destination_type: nodeName(chosen.relation.destination),
+            },
+          },
+    );
   }
 
-  const relationUid = await createStoredRelation(client, triple);
+  const { created, relationUid } = await ensureStoredRelation(client, triple);
+  if (!created) return textResult(alreadyExists(relationUid));
 
-  return ok({
+  return textResult({
     created: true,
     relation_uid: relationUid,
     ...triple,
