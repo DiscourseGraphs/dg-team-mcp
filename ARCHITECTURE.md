@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A standalone MCP server that gives AI assistants full access to a live Roam Research graph with Discourse Graph support. 48 tools total: 23 Roam base tools (re-exported from `@roam-research/roam-tools-core`) + 21 Discourse Graph tools + 4 buffered write-visibility tools for multi-batch Roam-native write approval.
+A standalone MCP server that gives AI assistants full access to a live Roam Research graph with Discourse Graph support. 49 tools total: 23 Roam base tools (re-exported from `@roam-research/roam-tools-core`) + 22 Discourse Graph tools + 4 buffered write-visibility tools for multi-batch Roam-native write approval.
 
 **Runtime:** Node.js + TypeScript (ESM), runs as a subprocess of Claude Code/Desktop
 **Transport:** stdio (JSON-RPC 2.0)
@@ -38,7 +38,7 @@ Claude (any MCP client)
     v
 discourse-graph-mcp
     |-- 23 Roam base tools (re-exported from roam-tools-core)
-    |-- 21 Discourse Graph tools
+    |-- 22 Discourse Graph tools
     |-- 4 buffered write-visibility tools
     |-- Knowledge index (~/.discourse-graph-mcp/pilot-index.json)
     |-- Write-visibility bridge (127.0.0.1:3597)
