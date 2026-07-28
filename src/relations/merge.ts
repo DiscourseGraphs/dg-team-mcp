@@ -34,12 +34,22 @@ export const mergeStoredRelations = (
     `${relation}::${direction}`;
   const grouped = new Map<string, RelationGroup>();
 
+  // Two distinct relation definitions can share a (label, direction) — the
+  // grammar defines e.g. "Supports" twice with different endpoint types — so
+  // groups arriving under the same key are unioned, never replaced.
   for (const group of inferred) {
-    grouped.set(keyOf(group.relation, group.direction), {
-      relation: group.relation,
-      direction: group.direction,
-      results: group.results.map((r) => ({ ...r, origin: "inferred" })),
-    });
+    const key = keyOf(group.relation, group.direction);
+    const tagged = group.results.map((r) => ({ ...r, origin: "inferred" }));
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.results.push(...tagged);
+    } else {
+      grouped.set(key, {
+        relation: group.relation,
+        direction: group.direction,
+        results: tagged,
+      });
+    }
   }
 
   for (const rel of stored) {

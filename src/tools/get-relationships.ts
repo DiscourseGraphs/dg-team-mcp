@@ -171,20 +171,30 @@ export const findDiscourseNodeType = async ({
   client,
   uid,
   nodes,
+  fresh = false,
 }: {
   client: RoamClient;
   uid: string;
   nodes: InternalDiscourseNodeType[];
+  /**
+   * Skip the cached answer (the result is still written back to the cache).
+   * The 5-minute TTL is fine for reads, but write validation must see current
+   * titles — a node formalized moments ago must not be refused, nor a renamed
+   * one accepted, because of a stale cached type.
+   */
+  fresh?: boolean;
 }) => {
   const nodeTypeCacheKey = getNodeTypeCacheKey(client, uid);
-  const cachedNodeType = getCachedValue<string | null>(
-    discourseNodeTypeCache as Map<
-      string,
-      { expiresAt: number; nodeTypeId?: string | null }
-    >,
-    nodeTypeCacheKey,
-  );
-  if (typeof cachedNodeType !== "undefined") return cachedNodeType;
+  if (!fresh) {
+    const cachedNodeType = getCachedValue<string | null>(
+      discourseNodeTypeCache as Map<
+        string,
+        { expiresAt: number; nodeTypeId?: string | null }
+      >,
+      nodeTypeCacheKey,
+    );
+    if (typeof cachedNodeType !== "undefined") return cachedNodeType;
+  }
 
   const { title } = await getNodeMetadata(client, uid);
 

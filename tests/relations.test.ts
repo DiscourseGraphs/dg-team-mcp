@@ -116,6 +116,21 @@ test("same label in opposite directions stays in separate groups", () => {
   );
 });
 
+test("two inferred groups sharing label+direction are unioned, not overwritten", () => {
+  const merged = mergeStoredRelations(
+    [
+      { relation: "Informed By", direction: "complement", results: [{ uid: "evd1", text: "e" }] },
+      { relation: "Informed By", direction: "complement", results: [{ uid: "res1", text: "r" }] },
+    ],
+    [],
+  );
+  assert.equal(merged.length, 1);
+  assert.deepEqual(
+    merged[0].results.map((r) => r.uid).sort(),
+    ["evd1", "res1"],
+  );
+});
+
 test("groups left empty are dropped", () => {
   assert.deepEqual(mergeStoredRelations([{ relation: "Supports", direction: "forward", results: [] }], []), []);
 });

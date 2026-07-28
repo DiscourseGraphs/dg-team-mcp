@@ -103,6 +103,11 @@ const createStoredRelation = async (
  * The write entry point: returns the existing record when the exact directed
  * triple is already stored, and writes it otherwise. Dedup-before-write is
  * module policy (README #2), enforced here rather than left to callers.
+ *
+ * Check-then-write: two concurrent identical calls can still both pass the
+ * check and write duplicates. Tolerated — live graphs already carry
+ * duplicates, the read path surfaces rather than corrupts them, and
+ * relations-read-check counts them.
  */
 export const ensureStoredRelation = async (
   client: RoamClient,

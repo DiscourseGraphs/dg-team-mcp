@@ -115,6 +115,17 @@ export const handleCreateRelation = async (
     ),
   ]);
 
+  // An unconfigured graph parses to built-in default relations whose ids are
+  // synthetic labels ("supports"), not definition-block uids — a stored record
+  // pointing at one would be permanently unresolvable. Refuse up front.
+  if (!config.configured) {
+    return errorResult(
+      "This graph has no roam/js/discourse-graph configuration, so stored " +
+        "relations cannot be created: hasSchema must reference a real " +
+        "relation-definition block.",
+    );
+  }
+
   const relationDefs = dedupeRelations(config.relations);
   if (!relationDefs.length) {
     return errorResult(
@@ -134,9 +145,11 @@ export const handleCreateRelation = async (
     return errorResult(`No such uid in this graph: ${missing.join(", ")}`);
   }
 
+  // fresh: this gates a write, so bypass the 5-minute read cache (see the
+  // parameter's doc in get-relationships.ts).
   const [sourceType, destinationType] = await Promise.all([
-    findDiscourseNodeType({ client, uid: sourceUid, nodes: config.nodes }),
-    findDiscourseNodeType({ client, uid: destinationUid, nodes: config.nodes }),
+    findDiscourseNodeType({ client, uid: sourceUid, nodes: config.nodes, fresh: true }),
+    findDiscourseNodeType({ client, uid: destinationUid, nodes: config.nodes, fresh: true }),
   ]);
 
   const untyped = [
@@ -175,9 +188,21 @@ export const handleCreateRelation = async (
     }
   }
 
+  // A self-complementary relation (label == complement, endpoint types
+  // compatible both ways) matches in both orientations with the SAME schema.
+  // The two writes are equivalent, and reporting them as an ambiguity would be
+  // a dead end — relation_schema_uid cannot distinguish them. Keep the first
+  // candidate per schema id, which is the forward orientation.
+  const seenIds = new Set<string>();
+  const distinct = candidates.filter((c) => {
+    if (seenIds.has(c.relation.id)) return false;
+    seenIds.add(c.relation.id);
+    return true;
+  });
+
   const narrowed = schemaUid
-    ? candidates.filter((c) => c.relation.id === schemaUid)
-    : candidates;
+    ? distinct.filter((c) => c.relation.id === schemaUid)
+    : distinct;
 
   if (!narrowed.length) {
     if (schemaUid) {

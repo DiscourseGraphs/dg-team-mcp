@@ -316,7 +316,7 @@ ADR-003 forbade the write half outright. But a discourse relation is not prose �
 
 **Why not route through the ADR-017 approval bridge:** that bridge renders proposed writes as virtual blocks at a target parent so the user can see where content lands. A relation record is a uid-stringed block full of opaque props — rendering it as a bullet communicates nothing, so the approval step would be theater. The honest options were a typed relation card in the Roam plugin (real work, deferred) or a validated direct write with `dry_run` (this ADR). If relation writes ever move to the plugin, ADR-017's card model is where they belong.
 
-**Trade-offs:** A misfired call adds a block to a config page rather than corrupting user content, and is undone by deleting one block. Against that, there is no user-visible approval step, which is why the tool ships disabled and validates aggressively before writing.
+**Trade-offs:** A misfired call adds a block to a config page rather than corrupting user content, and is undone by deleting one block. Against that, there is no user-visible approval step, which is why the tool ships disabled and validates aggressively before writing. The idempotency check is check-then-write, so two concurrent identical calls can still race in a duplicate record; the read path tolerates duplicates and `relations-read-check` counts them.
 
 ---
 
@@ -349,7 +349,7 @@ ADR-003 forbade the write half outright. But a discourse relation is not prose �
    | `[:find ?props ...]` | 403 rows | `[null]` |
    | `[(get ?props :k) ?v]`, `:find ?v` | 404 rows | 404 rows |
 
-   So relation reads use the ordinary `datalogQuery()` helper (which prefers `data.fast.q`) **provided every query destructures with `get` and never returns a raw map**. `src/canvas/props.ts` still needs the raw `q` action, because it genuinely wants the whole map back — that is the narrow exception, not the rule.
+   So relation reads use the ordinary `datalogQuery()` helper (which prefers `data.fast.q`) **provided every query destructures with `get` and never returns a raw map**. `src/canvas/props.ts` (on the unmerged `feat/canvas-mcp` branch) still needs the raw `q` action, because it genuinely wants the whole map back — that is the narrow exception, not the rule.
 
 **Why this matters for future work:** this is the same failure mode as ADR-004 — no error, no warning, just an empty result set that is indistinguishable from an empty graph. Anyone extending props usage should assume a zero-row result is a bug in their query until proven otherwise.
 

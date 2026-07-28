@@ -114,8 +114,8 @@ Progress is tracked in the checklist at the bottom of this file.
 - [x] `create_discourse_relation` tool, env-gated behind `DG_MCP_RELATION_WRITE`
 - [x] ADR-003 superseded; ADR-018/019 written
 - [x] README + ARCHITECTURE updated
-- [x] Smoke script against sandbox-dg — 13/13 passing, graph restored to baseline
-- [x] Unit tests — `tests/relations.test.ts`, 8 passing (full suite 10/10)
+- [x] Smoke script against sandbox-dg — all checks passing, graph restored to baseline
+- [x] Unit tests — `tests/relations.test.ts` (10 tests; full suite 22/22 incl. main's tree tests)
 - [x] Read path validated against dg-team production, **read-only**
 - [ ] **No writes have ever been made to dg-team.** Only sandbox-dg has been
       written to, and every test record was deleted. Writing to production needs
@@ -203,7 +203,15 @@ matches with `:block/page` — any depth on the page. A record that ends up nest
 live to the plugin but was invisible to us. Fixed, with a test. Currently latent: both
 forms return 439 on sandbox-dg, so nothing was actually being missed.
 
-### Unresolved: `getInternalDiscourseConfig` is an N+1, and it now dominates every call
+### Config N+1 — resolved on `main` by ADR-020 while this branch was in flight
+
+**Resolution (2026-07-27):** everything below was fixed by PR #3 / ADR-020: subtrees now
+fetch in one `:block/parents` query, node pages are discovered via Datalog instead of
+`data.ai.search`, and `getInternalDiscourseConfig` is memoised per client (per request).
+`get_discourse_node_types` went ~35s → 538ms (sandbox) / 759ms (dg-team), and after
+rebasing this branch onto that fix, `relations-smoke.ts` passes end-to-end within the
+default 60s client timeout. The measurements below are kept as the record of what the
+N+1 looked like from this branch.
 
 Measured on sandbox-dg after the update: **~35s per MCP tool call**, of which ~35.7s is
 `getInternalDiscourseConfig` alone. The relation datalog itself is 16-45ms.
@@ -222,10 +230,6 @@ multiplies the pre-existing N+1 into something that blows past the MCP SDK's 60s
 request timeout. The stock `relations-smoke.ts` now dies partway through for this reason,
 not because of a relations bug.
 
-This is shared `main`-branch code used by every discourse tool, not just relations, so it
-wants its own change and its own test pass. The fix is to replace the level-by-level
-recursion with a single pull of the page's whole block tree.
-
-- [ ] Collapse `getBasicTreeByParentUid` / `getNodePages` to one query each
-- [ ] Cache `getInternalDiscourseConfig` per client for the life of a request
-- [ ] Raise the smoke script's client timeout above the 60s default
+This was shared `main`-branch code used by every discourse tool, not just relations,
+which is why it was fixed in its own PR (see the resolution note above) rather than on
+this branch.
