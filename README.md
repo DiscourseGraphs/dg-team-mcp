@@ -369,7 +369,7 @@ window.dgMcpWriteLocator.refresh()    // force an immediate poll
 
 ## Tools Reference
 
-Up to 49 tools: 23 Roam base + 22 Discourse Graph + 4 Buffered Write Visibility. **By default only the 8-tool discourse-read cluster is registered** — see [Tool groups](#tool-groups) to enable the rest.
+Up to 59 tools: 23 Roam base + 22 Discourse Graph + 10 Canvas + 4 Buffered Write Visibility. **By default only the 8-tool discourse-read cluster is registered** — see [Tool groups](#tool-groups) to enable the rest.
 
 <details>
 <summary><strong>Graph Management</strong> — connect and inspect your Roam graph</summary>
@@ -548,6 +548,7 @@ Claude (any MCP client)
 discourse-graph-mcp
     |-- 23 Roam base tools (from @roam-research/roam-tools-core)
     |-- 22 Discourse Graph tools
+    |-- 10 Canvas tools (DG_MCP_CANVAS_TOOLS)
     |-- 4 Buffered write-visibility tools
     |-- Write-visibility bridge (127.0.0.1:3597)
     |
