@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A standalone MCP server that gives AI assistants full access to a live Roam Research graph with Discourse Graph support. 49 tools total: 23 Roam base tools (re-exported from `@roam-research/roam-tools-core`) + 22 Discourse Graph tools + 4 buffered write-visibility tools for multi-batch Roam-native write approval.
+A standalone MCP server that gives AI assistants full access to a live Roam Research graph with Discourse Graph support. 59 tools total: 23 Roam base tools (re-exported from `@roam-research/roam-tools-core`) + 22 Discourse Graph tools + 10 canvas tools + 4 buffered write-visibility tools for multi-batch Roam-native write approval.
 
 **Runtime:** Node.js + TypeScript (ESM), runs as a subprocess of Claude Code/Desktop
 **Transport:** stdio (JSON-RPC 2.0)
@@ -39,6 +39,7 @@ Claude (any MCP client)
 discourse-graph-mcp
     |-- 23 Roam base tools (re-exported from roam-tools-core)
     |-- 22 Discourse Graph tools
+    |-- 10 Canvas tools (DG_MCP_CANVAS_TOOLS)
     |-- 4 buffered write-visibility tools
     |-- Knowledge index (~/.discourse-graph-mcp/pilot-index.json)
     |-- Write-visibility bridge (127.0.0.1:3597)
@@ -138,6 +139,11 @@ src/
 │   ├── read.ts                       #   relations for a node; exact-triple lookup for dedup
 │   ├── write.ts                      #   idempotent ensure over the two-step create, with rollback
 │   └── merge.ts                      #   inferred/stored union with origin tagging
+├── canvas/                           # Discourse-graph canvases (tldraw boards in page props) — see its README
+│   ├── model.ts / schema.ts          #   record shapes + validation
+│   ├── props.ts                      #   page-props read (raw `q` action — the narrow exception, ADR-019)
+│   ├── records.ts / snapshot.ts      #   tldraw record assembly + store snapshot
+│   └── context.ts / write.ts         #   graph context resolution + deployed-format writes
 ├── discourse-config.ts               # Config parsing (node types + relations)
 ├── tree-utils.ts                     # Pure utils (from roamjs-components)
 ├── defaults.ts                       # Default nodes + relations
