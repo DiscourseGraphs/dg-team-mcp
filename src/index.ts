@@ -2,6 +2,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { getMcpConfig, RoamClient, tools as roamTools, routeToolCall } from "@roam-research/roam-tools-local";
 import { RoamError } from "@roam-research/roam-tools-core";
 import { createClient } from "./roam.js";
@@ -26,6 +27,9 @@ import {
 import {
   GetRelationshipsSchema, getRelationshipsDescription, handleGetRelationships,
 } from "./tools/get-relationships.js";
+import {
+  CreateRelationSchema, createRelationDescription, handleCreateRelation,
+} from "./tools/create-relation.js";
 import {
   GetNodeImagesSchema, getNodeImagesDescription, handleGetNodeImages,
 } from "./tools/get-node-images.js";
@@ -103,26 +107,22 @@ const server = new McpServer({
 //   DG_MCP_PILOT_TOOLS            — pilot-feedback indexing/analysis
 //   DG_MCP_WRITE_TOOLS            — buffered propose/approve writes (needs the
 //                                   companion Roam plugin)
+//   DG_MCP_RELATION_WRITE         — create_discourse_relation (writes stored
+//                                   relation records directly; see ADR-018)
 const envOn = (name: string): boolean =>
   /^(1|true|on|yes)$/i.test(process.env[name] ?? "");
 const ENABLE_BASE_TOOLS = envOn("DG_MCP_BASE_TOOLS");
 const ENABLE_EXTRA_DISCOURSE_TOOLS = envOn("DG_MCP_EXTRA_DISCOURSE_TOOLS");
 const ENABLE_PILOT_TOOLS = envOn("DG_MCP_PILOT_TOOLS");
 const ENABLE_WRITE_TOOLS = envOn("DG_MCP_WRITE_TOOLS");
+const ENABLE_RELATION_WRITE = envOn("DG_MCP_RELATION_WRITE");
 
 const CREATE_BLOCK_PREFERENCE_NOTE =
   "Direct graph mutation. For append-only child blocks where you want " +
   "Roam-side target visibility first, prefer propose_write_batch " +
   "(or propose_write for a single branch).";
 
-type ToolContent =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string };
-
-type ToolResult = {
-  content: ToolContent[];
-  isError?: boolean;
-};
+type ToolResult = CallToolResult;
 
 // ── Auto-loaded graph guidelines ──
 // Fetched once per graph on first tool call, prepended to the response.
@@ -344,6 +344,14 @@ server.tool("get_relationships", getRelationshipsDescription,
   GetRelationshipsSchema.shape,
   withClient(async (client, _n, args) =>
     handleGetRelationships(client, args.uid as string),
+  ),
+);
+
+// Tool 7b: Create a stored discourse relation (write; off by default — ADR-018)
+if (ENABLE_RELATION_WRITE) server.tool("create_discourse_relation", createRelationDescription,
+  CreateRelationSchema.shape,
+  withClient(async (client, _n, args) =>
+    handleCreateRelation(client, args as Parameters<typeof handleCreateRelation>[1]),
   ),
 );
 

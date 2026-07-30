@@ -53,7 +53,7 @@ const DISCOURSE_CONFIG_PAGE_TITLE = "roam/js/discourse-graph";
 // TODO: Sanitize interpolated values when accepting user-provided input.
 // Currently safe — all values come from hardcoded constants or Roam's own query results.
 
-async function getPageUidByTitle(
+export async function getPageUidByTitle(
   client: RoamClient,
   title: string,
 ): Promise<string | undefined> {

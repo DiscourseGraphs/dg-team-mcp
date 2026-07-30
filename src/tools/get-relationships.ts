@@ -10,12 +10,14 @@
 import { z } from "zod";
 import type { RoamClient } from "@roam-research/roam-tools-local";
 import compileDatalog from "../query/compile-datalog.js";
-import { getInternalDiscourseConfig } from "../discourse-config.js";
+import { dedupeRelations, getInternalDiscourseConfig } from "../discourse-config.js";
 import { discourseNodeToDatalog } from "../query/discourse-node-utils.js";
 import { fireQueryDetailed } from "../query/fire-query.js";
 import { registerDiscourseTranslators } from "../query/register-discourse-translators.js";
 import type { Result as QueryResult } from "../query/types.js";
 import { datalogQuery } from "../roam.js";
+import { getStoredRelationsForNode } from "../relations/read.js";
+import { mergeStoredRelations } from "../relations/merge.js";
 import getDiscourseNodeFormatExpression from "../format-expression.js";
 import type {
   InternalDiscourseNodeType,
@@ -165,24 +167,34 @@ ${whereClauses}
   return rows.length > 0;
 };
 
-const findDiscourseNodeType = async ({
+export const findDiscourseNodeType = async ({
   client,
   uid,
   nodes,
+  fresh = false,
 }: {
   client: RoamClient;
   uid: string;
   nodes: InternalDiscourseNodeType[];
+  /**
+   * Skip the cached answer (the result is still written back to the cache).
+   * The 5-minute TTL is fine for reads, but write validation must see current
+   * titles — a node formalized moments ago must not be refused, nor a renamed
+   * one accepted, because of a stale cached type.
+   */
+  fresh?: boolean;
 }) => {
   const nodeTypeCacheKey = getNodeTypeCacheKey(client, uid);
-  const cachedNodeType = getCachedValue<string | null>(
-    discourseNodeTypeCache as Map<
-      string,
-      { expiresAt: number; nodeTypeId?: string | null }
-    >,
-    nodeTypeCacheKey,
-  );
-  if (typeof cachedNodeType !== "undefined") return cachedNodeType;
+  if (!fresh) {
+    const cachedNodeType = getCachedValue<string | null>(
+      discourseNodeTypeCache as Map<
+        string,
+        { expiresAt: number; nodeTypeId?: string | null }
+      >,
+      nodeTypeCacheKey,
+    );
+    if (typeof cachedNodeType !== "undefined") return cachedNodeType;
+  }
 
   const { title } = await getNodeMetadata(client, uid);
 
@@ -231,22 +243,6 @@ const buildSelections = (
   return [];
 };
 
-const getDedupedRelations = (relations: InternalDiscourseRelationType[]) =>
-  Array.from(
-    new Map(
-      relations.map((relation) => [
-        [
-          relation.id,
-          relation.label,
-          relation.source,
-          relation.destination,
-          relation.complement,
-        ].join("::"),
-        relation,
-      ]),
-    ).values(),
-  );
-
 const runWithConcurrencyLimit = async <T,>(
   items: T[],
   limit: number,
@@ -277,13 +273,15 @@ export const handleGetRelationships = async (
     });
     nodeNameByType["*"] = "Any";
 
-    const targetNodeType = await findDiscourseNodeType({
-      client,
-      uid: targetUid,
-      nodes: config.nodes,
-    });
+    // Stored relations are keyed by uid alone, so they resolve even for nodes
+    // whose title no longer matches a configured node type.
+    const [targetNodeType, stored] = await Promise.all([
+      findDiscourseNodeType({ client, uid: targetUid, nodes: config.nodes }),
+      getStoredRelationsForNode(client, targetUid, config.relations),
+    ]);
 
     if (!targetNodeType) {
+      const groups = mergeStoredRelations([], stored.relations);
       return {
         content: [
           {
@@ -291,8 +289,10 @@ export const handleGetRelationships = async (
             text: JSON.stringify(
               {
                 uid: targetUid,
-                relation_count: 0,
-                relations: [],
+                note: "Not a recognized discourse node type; inferred relations were not queried.",
+                relation_count: groups.length,
+                stale_schema_records: stored.staleSchemaCount,
+                relations: groups,
               },
               null,
               2,
@@ -302,7 +302,7 @@ export const handleGetRelationships = async (
       };
     }
 
-    const relevantRelations = getDedupedRelations(config.relations).flatMap((r) => {
+    const relevantRelations = dedupeRelations(config.relations).flatMap((r) => {
       const matches: Array<{
         relation: InternalDiscourseRelationType;
         direction: "forward" | "complement";
@@ -376,6 +376,8 @@ export const handleGetRelationships = async (
       }
     });
 
+    const groups = mergeStoredRelations(results, stored.relations);
+
     return {
       content: [
         {
@@ -385,8 +387,10 @@ export const handleGetRelationships = async (
               uid: targetUid,
               node_type: nodeNameByType[targetNodeType] || targetNodeType,
               relevant_relation_queries: relevantRelations.length,
-              relation_count: results.length,
-              relations: results,
+              relation_count: groups.length,
+              stored_relation_records: stored.relations.length,
+              stale_schema_records: stored.staleSchemaCount,
+              relations: groups,
             },
             null,
             2,
