@@ -121,16 +121,18 @@ const server = new McpServer({
 //                                   companion Roam plugin)
 //   DG_MCP_RELATION_WRITE         — create_discourse_relation (writes stored
 //                                   relation records directly; see ADR-018)
-//   DG_MCP_CANVAS_TOOLS           — read/write discourse-graph canvases
-//                                   (tldraw boards) via the Local API
+// The canvas tools (read/write discourse-graph canvases via the Local API)
+// are ON by default; opt out with DG_MCP_CANVAS_TOOLS=0/false/off/no.
 const envOn = (name: string): boolean =>
   /^(1|true|on|yes)$/i.test(process.env[name] ?? "");
+const envOff = (name: string): boolean =>
+  /^(0|false|off|no)$/i.test(process.env[name] ?? "");
 const ENABLE_BASE_TOOLS = envOn("DG_MCP_BASE_TOOLS");
 const ENABLE_EXTRA_DISCOURSE_TOOLS = envOn("DG_MCP_EXTRA_DISCOURSE_TOOLS");
 const ENABLE_PILOT_TOOLS = envOn("DG_MCP_PILOT_TOOLS");
 const ENABLE_WRITE_TOOLS = envOn("DG_MCP_WRITE_TOOLS");
 const ENABLE_RELATION_WRITE = envOn("DG_MCP_RELATION_WRITE");
-const ENABLE_CANVAS_TOOLS = envOn("DG_MCP_CANVAS_TOOLS");
+const ENABLE_CANVAS_TOOLS = !envOff("DG_MCP_CANVAS_TOOLS");
 
 const CREATE_BLOCK_PREFERENCE_NOTE =
   "Direct graph mutation. For append-only child blocks where you want " +
@@ -615,7 +617,7 @@ server.tool("clear_pending_write_batch", clearPendingWriteBatchDescription,
 
 } // end buffered write-visibility tools (DG_MCP_WRITE_TOOLS)
 
-// ── Canvas tools (off by default; enable with DG_MCP_CANVAS_TOOLS) ──
+// ── Canvas tools (on by default; disable with DG_MCP_CANVAS_TOOLS=0) ──
 // Read/write discourse-graph canvases (tldraw boards in Roam page props).
 // Writes go directly through data.page.update (page-level props), not the
 // markdown-branch write-visibility bridge.

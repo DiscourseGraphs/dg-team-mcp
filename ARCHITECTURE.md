@@ -39,7 +39,7 @@ Claude (any MCP client)
 discourse-graph-mcp
     |-- 23 Roam base tools (re-exported from roam-tools-core)
     |-- 22 Discourse Graph tools
-    |-- 10 Canvas tools (DG_MCP_CANVAS_TOOLS)
+    |-- 10 Canvas tools (on by default; DG_MCP_CANVAS_TOOLS=0 to disable)
     |-- 4 buffered write-visibility tools
     |-- Knowledge index (~/.discourse-graph-mcp/pilot-index.json)
     |-- Write-visibility bridge (127.0.0.1:3597)

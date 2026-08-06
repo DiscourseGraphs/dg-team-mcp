@@ -178,15 +178,16 @@ Open a new Claude session and try:
 "What discourse node types are in my graph?"
 ```
 
-> **Note:** By default this server exposes only the **discourse-read tools** — the base Roam tools are **off** (see [Tool groups](#tool-groups)). That makes it safe to run alongside the official `@roam-research/roam-mcp`. To use this server as a standalone drop-in that also provides the base Roam tools, set `DG_MCP_BASE_TOOLS=on` (then remove `@roam-research/roam-mcp` to avoid duplicate tools).
+> **Note:** By default this server exposes the **discourse-read tools** and the **canvas tools** — the base Roam tools are **off** (see [Tool groups](#tool-groups)). That makes it safe to run alongside the official `@roam-research/roam-mcp`. To use this server as a standalone drop-in that also provides the base Roam tools, set `DG_MCP_BASE_TOOLS=on` (then remove `@roam-research/roam-mcp` to avoid duplicate tools).
 
 ---
 
 ## Tool groups
 
-By default the server registers only the **8-tool discourse-read cluster**:
+By default the server registers the **8-tool discourse-read cluster**:
 `get_discourse_node_types`, `get_all_discourse_nodes`, `search_nodes`, `get_node`,
-`get_linked_nodes`, `get_relationships`, `get_node_neighborhood`, `get_node_section`.
+`get_linked_nodes`, `get_relationships`, `get_node_neighborhood`, `get_node_section` —
+plus the **10 canvas tools** (see below).
 
 Every other group is **off by default** and re-enabled with an environment
 variable (set to `1`/`true`/`on`/`yes`) in your MCP server config:
@@ -198,7 +199,8 @@ variable (set to `1`/`true`/`on`/`yes`) in your MCP server config:
 | `DG_MCP_PILOT_TOOLS` | pilot-analysis tools (`get_pilot_users`, `search_pilots_live`, `index_pilot_pages`, …) |
 | `DG_MCP_WRITE_TOOLS` | buffered write-visibility tools (`propose_write_batch`, …) + the write-visibility bridge |
 | `DG_MCP_RELATION_WRITE` | `create_discourse_relation` — writes stored relation records directly (see [ADR-018](ADR.md)) |
-| `DG_MCP_CANVAS_TOOLS` | read/write discourse-graph **canvases** (tldraw boards) — `canvas_list`, `canvas_types`, `canvas_read`, `canvas_create`, `canvas_add_node`, `canvas_connect`, `canvas_add_text`, `canvas_create_frame`, `canvas_move`, `canvas_delete` (see [`src/canvas/README.md`](src/canvas/README.md)) |
+
+The 10 **canvas** tools (read/write discourse-graph canvases — `canvas_list`, `canvas_types`, `canvas_read`, `canvas_create`, `canvas_add_node`, `canvas_connect`, `canvas_add_text`, `canvas_create_frame`, `canvas_move`, `canvas_delete`; see [`src/canvas/README.md`](src/canvas/README.md)) are **on by default**; disable them with `DG_MCP_CANVAS_TOOLS=0`/`false`/`off`/`no`.
 
 Example (Claude Code) — lean discourse-read add-on alongside `@roam-research/roam-mcp` (the default; no env needed):
 
@@ -548,7 +550,7 @@ Claude (any MCP client)
 discourse-graph-mcp
     |-- 23 Roam base tools (from @roam-research/roam-tools-core)
     |-- 22 Discourse Graph tools
-    |-- 10 Canvas tools (DG_MCP_CANVAS_TOOLS)
+    |-- 10 Canvas tools (on by default; DG_MCP_CANVAS_TOOLS=0 to disable)
     |-- 4 Buffered write-visibility tools
     |-- Write-visibility bridge (127.0.0.1:3597)
     |
