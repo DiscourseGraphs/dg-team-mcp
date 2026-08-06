@@ -1,7 +1,7 @@
 # canvas tools
 
 Agentic read/write of discourse-graph **canvases** — the tldraw 2.4.6 boards the
-Roam extension persists in page props. Enabled with `DG_MCP_CANVAS_TOOLS=on`.
+Roam extension persists in page props. On by default (disable with `DG_MCP_CANVAS_TOOLS=off`).
 No browser required: reads/writes go through the Roam Desktop Local API, and live
 canvas clients pick up writes as if from a remote collaborator.
 
