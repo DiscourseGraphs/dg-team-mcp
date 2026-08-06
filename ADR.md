@@ -349,7 +349,7 @@ ADR-003 forbade the write half outright. But a discourse relation is not prose �
    | `[:find ?props ...]` | 403 rows | `[null]` |
    | `[(get ?props :k) ?v]`, `:find ?v` | 404 rows | 404 rows |
 
-   So relation reads use the ordinary `datalogQuery()` helper (which prefers `data.fast.q`) **provided every query destructures with `get` and never returns a raw map**. `src/canvas/props.ts` (on the unmerged `feat/canvas-mcp` branch) still needs the raw `q` action, because it genuinely wants the whole map back — that is the narrow exception, not the rule.
+   So relation reads use the ordinary `datalogQuery()` helper (which prefers `data.fast.q`) **provided every query destructures with `get` and never returns a raw map**. `src/canvas/props.ts` still needs the raw `q` action, because it genuinely wants the whole map back — that is the narrow exception, not the rule.
 
 **Why this matters for future work:** this is the same failure mode as ADR-004 — no error, no warning, just an empty result set that is indistinguishable from an empty graph. Anyone extending props usage should assume a zero-row result is a bug in their query until proven otherwise.
 

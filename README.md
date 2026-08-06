@@ -198,6 +198,7 @@ variable (set to `1`/`true`/`on`/`yes`) in your MCP server config:
 | `DG_MCP_PILOT_TOOLS` | pilot-analysis tools (`get_pilot_users`, `search_pilots_live`, `index_pilot_pages`, …) |
 | `DG_MCP_WRITE_TOOLS` | buffered write-visibility tools (`propose_write_batch`, …) + the write-visibility bridge |
 | `DG_MCP_RELATION_WRITE` | `create_discourse_relation` — writes stored relation records directly (see [ADR-018](ADR.md)) |
+| `DG_MCP_CANVAS_TOOLS` | read/write discourse-graph **canvases** (tldraw boards) — `canvas_list`, `canvas_types`, `canvas_read`, `canvas_create`, `canvas_add_node`, `canvas_connect`, `canvas_add_text`, `canvas_create_frame`, `canvas_move`, `canvas_delete` (see [`src/canvas/README.md`](src/canvas/README.md)) |
 
 Example (Claude Code) — lean discourse-read add-on alongside `@roam-research/roam-mcp` (the default; no env needed):
 
@@ -368,7 +369,7 @@ window.dgMcpWriteLocator.refresh()    // force an immediate poll
 
 ## Tools Reference
 
-Up to 49 tools: 23 Roam base + 22 Discourse Graph + 4 Buffered Write Visibility. **By default only the 8-tool discourse-read cluster is registered** — see [Tool groups](#tool-groups) to enable the rest.
+Up to 59 tools: 23 Roam base + 22 Discourse Graph + 10 Canvas + 4 Buffered Write Visibility. **By default only the 8-tool discourse-read cluster is registered** — see [Tool groups](#tool-groups) to enable the rest.
 
 <details>
 <summary><strong>Graph Management</strong> — connect and inspect your Roam graph</summary>
@@ -547,6 +548,7 @@ Claude (any MCP client)
 discourse-graph-mcp
     |-- 23 Roam base tools (from @roam-research/roam-tools-core)
     |-- 22 Discourse Graph tools
+    |-- 10 Canvas tools (DG_MCP_CANVAS_TOOLS)
     |-- 4 Buffered write-visibility tools
     |-- Write-visibility bridge (127.0.0.1:3597)
     |

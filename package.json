@@ -20,6 +20,10 @@
     "@modelcontextprotocol/sdk": "^1.27.0",
     "@roam-research/roam-tools-core": "^0.9.1",
     "@roam-research/roam-tools-local": "^0.9.1",
+    "@tldraw/store": "2.4.6",
+    "@tldraw/tlschema": "2.4.6",
+    "@tldraw/utils": "2.4.6",
+    "nanoid": "^5.0.7",
     "zod": "^3.25.0"
   },
   "devDependencies": {
