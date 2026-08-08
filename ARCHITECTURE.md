@@ -238,7 +238,7 @@ export const parseQuery = (...) => { ... };
 |---|---|---|
 | `get_linked_nodes` | Outgoing refs + incoming backlinks | Datalog `block/refs` joins |
 | `get_relationships` | Typed discourse relations, inferred + stored, tagged by origin | `fireQueryDetailed` unioned with `relations/read.ts` |
-| `create_discourse_relation` | Assert one stored relation (gated: `DG_MCP_RELATION_WRITE`) | `relations/write.ts` |
+| `create_discourse_relation` | Assert one stored relation (on by default; opt out: `DG_MCP_RELATION_WRITE=0`) | `relations/write.ts` |
 | `get_node_neighborhood` | K-hop BFS traversal | Repeated `block/refs` queries |
 | `get_node_images` | Image URLs from content | Recursive tree scan, regex |
 

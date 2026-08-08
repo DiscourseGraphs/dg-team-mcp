@@ -89,5 +89,5 @@ resolution needs no new parser.
 - `merge.ts` — the inferred/stored union with `origin` tagging
 
 Tool surface: `get_relationships` (read, always on) and
-`create_discourse_relation` (write, gated behind `DG_MCP_RELATION_WRITE`).
+`create_discourse_relation` (write, on by default; opt out with `DG_MCP_RELATION_WRITE=0`).
 See ADR-018 and ADR-019.
