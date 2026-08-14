@@ -198,9 +198,10 @@ variable (set to `1`/`true`/`on`/`yes`) in your MCP server config:
 | `DG_MCP_EXTRA_DISCOURSE_TOOLS` | `run_discourse_query`, `get_node_images`, `get_researcher_contributions`, `catch_me_up`, `get_users` |
 | `DG_MCP_PILOT_TOOLS` | pilot-analysis tools (`get_pilot_users`, `search_pilots_live`, `index_pilot_pages`, …) |
 | `DG_MCP_WRITE_TOOLS` | buffered write-visibility tools (`propose_write_batch`, …) + the write-visibility bridge |
-| `DG_MCP_RELATION_WRITE` | `create_discourse_relation` — writes stored relation records directly (see [ADR-018](ADR.md)) |
 
 The 10 **canvas** tools (read/write discourse-graph canvases — `canvas_list`, `canvas_types`, `canvas_read`, `canvas_create`, `canvas_add_node`, `canvas_connect`, `canvas_add_text`, `canvas_create_frame`, `canvas_move`, `canvas_delete`; see [`src/canvas/README.md`](src/canvas/README.md)) are **on by default**; disable them with `DG_MCP_CANVAS_TOOLS=0`/`false`/`off`/`no`.
+
+`create_discourse_relation` (writes stored relation records directly; see [ADR-018](ADR.md)) is likewise **on by default** — disable it with `DG_MCP_RELATION_WRITE=0`/`false`/`off`/`no`. It validates the type pairing, refuses ambiguous labels rather than guessing, is idempotent, and supports `dry_run`.
 
 Example (Claude Code) — lean discourse-read add-on alongside `@roam-research/roam-mcp` (the default; no env needed):
 
@@ -472,7 +473,7 @@ Up to 59 tools: 23 Roam base + 22 Discourse Graph + 10 Canvas + 4 Buffered Write
 |------|-------------|
 | `get_linked_nodes` | Outgoing references + incoming backlinks |
 | `get_relationships` | Typed discourse relations (Supports, Opposes, Informs, etc.), both inferred from the grammar and stored as explicit records; each result tagged `origin: inferred｜stored｜both` |
-| `create_discourse_relation` | Assert a typed relation between two nodes (needs `DG_MCP_RELATION_WRITE`) |
+| `create_discourse_relation` | Assert a typed relation between two nodes (on by default; disable with `DG_MCP_RELATION_WRITE=0`) |
 | `get_node_neighborhood` | K-hop BFS traversal around a node |
 | `get_node_images` | Extract image URLs from a node's content |
 

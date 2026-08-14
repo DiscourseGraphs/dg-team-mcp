@@ -119,10 +119,10 @@ const server = new McpServer({
 //   DG_MCP_PILOT_TOOLS            — pilot-feedback indexing/analysis
 //   DG_MCP_WRITE_TOOLS            — buffered propose/approve writes (needs the
 //                                   companion Roam plugin)
-//   DG_MCP_RELATION_WRITE         — create_discourse_relation (writes stored
-//                                   relation records directly; see ADR-018)
-// The canvas tools (read/write discourse-graph canvases via the Local API)
-// are ON by default; opt out with DG_MCP_CANVAS_TOOLS=0/false/off/no.
+// The canvas tools (read/write discourse-graph canvases via the Local API) and
+// create_discourse_relation (writes stored relation records; see ADR-018) are
+// ON by default; opt out with DG_MCP_CANVAS_TOOLS / DG_MCP_RELATION_WRITE set
+// to 0/false/off/no.
 const envOn = (name: string): boolean =>
   /^(1|true|on|yes)$/i.test(process.env[name] ?? "");
 const envOff = (name: string): boolean =>
@@ -131,7 +131,7 @@ const ENABLE_BASE_TOOLS = envOn("DG_MCP_BASE_TOOLS");
 const ENABLE_EXTRA_DISCOURSE_TOOLS = envOn("DG_MCP_EXTRA_DISCOURSE_TOOLS");
 const ENABLE_PILOT_TOOLS = envOn("DG_MCP_PILOT_TOOLS");
 const ENABLE_WRITE_TOOLS = envOn("DG_MCP_WRITE_TOOLS");
-const ENABLE_RELATION_WRITE = envOn("DG_MCP_RELATION_WRITE");
+const ENABLE_RELATION_WRITE = !envOff("DG_MCP_RELATION_WRITE");
 const ENABLE_CANVAS_TOOLS = !envOff("DG_MCP_CANVAS_TOOLS");
 
 const CREATE_BLOCK_PREFERENCE_NOTE =
@@ -364,7 +364,7 @@ server.tool("get_relationships", getRelationshipsDescription,
   ),
 );
 
-// Tool 7b: Create a stored discourse relation (write; off by default — ADR-018)
+// Tool 7b: Create a stored discourse relation (write; on by default — ADR-018)
 if (ENABLE_RELATION_WRITE) server.tool("create_discourse_relation", createRelationDescription,
   CreateRelationSchema.shape,
   withClient(async (client, _n, args) =>

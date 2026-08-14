@@ -307,7 +307,7 @@ ADR-003 forbade the write half outright. But a discourse relation is not prose �
 
 **Decision:**
 1. The analysis surface stays read-only. ADR-003's guarantee holds for every search, indexing, and query tool.
-2. Exactly one discourse tool writes: `create_discourse_relation`, gated behind `DG_MCP_RELATION_WRITE`, **off by default**.
+2. Exactly one discourse tool writes: `create_discourse_relation`, gated behind `DG_MCP_RELATION_WRITE`. ~~Off by default.~~ **On by default as of the 2026-08-08 amendment below**; opt out with `DG_MCP_RELATION_WRITE=0`.
 3. That tool writes exactly one block per call, always as a child of `roam/js/discourse-graph/relations`, and never touches user prose.
 4. It refuses rather than guesses. Ambiguous labels, unknown uids, non-discourse nodes, and illegal type pairings are errors that name the fix — never a best-effort write.
 5. It is idempotent: an identical directed triple returns the existing `relation_uid` instead of creating a duplicate.
@@ -317,6 +317,12 @@ ADR-003 forbade the write half outright. But a discourse relation is not prose �
 **Why not route through the ADR-017 approval bridge:** that bridge renders proposed writes as virtual blocks at a target parent so the user can see where content lands. A relation record is a uid-stringed block full of opaque props — rendering it as a bullet communicates nothing, so the approval step would be theater. The honest options were a typed relation card in the Roam plugin (real work, deferred) or a validated direct write with `dry_run` (this ADR). If relation writes ever move to the plugin, ADR-017's card model is where they belong.
 
 **Trade-offs:** A misfired call adds a block to a config page rather than corrupting user content, and is undone by deleting one block. Against that, there is no user-visible approval step, which is why the tool ships disabled and validates aggressively before writing. The idempotency check is check-then-write, so two concurrent identical calls can still race in a duplicate record; the read path tolerates duplicates and `relations-read-check` counts them.
+
+**Amendment (2026-08-08): the default flips to on.** Decision point 2 shipped the tool disabled because there is no user-visible approval step. Two things have changed. First, disabled-by-default meant nobody ran it: an agent auditing dg-team's schema in August 2026 had to fall back to raw block surgery through the generic Roam MCP to clean up duplicate relation definitions — strictly more dangerous than the validated tool this ADR describes, because the generic path has none of points 4–7. A safety gate that pushes work onto an unsafer path is not a safety gate. Second, the blast radius argued in the trade-off above is real and small: one block, on a config page, undone by deleting one block, with `dry_run` available to preview. The canvas tools — which also write — took the same on-by-default posture in PR #7 on the same reasoning.
+
+What does **not** change: the analysis surface stays read-only (point 1), and points 3–7 — one block per call, refuse rather than guess, idempotent, one direction only, `dry_run` — are the actual safety property and are unconditional. Anyone wanting the old posture sets `DG_MCP_RELATION_WRITE=0`.
+
+**Still missing, and the reason this needed saying:** there is no tool to *delete* a stored relation (`deleteStoredRelation` in `relations/write.ts` is an internal rollback helper only) and none to repoint a record's `hasSchema`. Until those exist, cleanup work still falls back to raw block edits, which is the exact failure mode this amendment is trying to close.
 
 ---
 
