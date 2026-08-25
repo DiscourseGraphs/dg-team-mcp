@@ -1,6 +1,6 @@
 // Tool: search_nodes
-// Full-text keyword search across discourse node titles and content.
-// Uses Datalog with clojure.string/includes? for matching.
+// Keyword search across discourse node titles, ranked by BM25 relevance.
+// Titles are fetched via Datalog, then scored and ranked in JS.
 
 import { z } from "zod";
 import type { RoamClient } from "@roam-research/roam-tools-local";
@@ -8,7 +8,11 @@ import { datalogQuery } from "../roam.js";
 
 export const SearchNodesSchema = z.object({
   graph: z.string().optional().describe("Graph name or nickname."),
-  query: z.string().describe("Search keywords. All words must appear in the node title."),
+  query: z
+    .string()
+    .describe(
+      "Search keywords. Results are ranked by BM25 relevance — titles matching more (and rarer) query words rank higher. Not every word must appear.",
+    ),
   node_type_format: z
     .string()
     .optional()
@@ -19,16 +23,77 @@ export const SearchNodesSchema = z.object({
 });
 
 export const searchNodesDescription =
-  "Search for discourse nodes by keyword in their titles. " +
-  "Returns matching pages with their UIDs, titles, creation times, and authors.";
+  "Search for discourse nodes by keywords in their titles, ranked by BM25 relevance " +
+  "(titles matching only some query words are included, ranked lower). " +
+  "Returns matching pages with their UIDs, titles, relevance scores, creation times, and authors.";
 
-type SearchResult = {
+export type SearchResult = {
   text: string;
   uid: string;
   created: number;
   author: string;
 };
 type SearchResultTuple = [string, string, number, string];
+
+export type RankedResult = SearchResult & { score: number };
+
+const BM25_K1 = 1.2;
+const BM25_B = 0.75;
+
+const tokenize = (s: string): string[] =>
+  s
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+
+// A token matches a term when it contains it, preserving the old
+// substring filter's stem-friendly behavior ("endocyto" ~ "endocytosis").
+const termFrequency = (tokens: string[], term: string): number =>
+  tokens.reduce((count, token) => (token.includes(term) ? count + 1 : count), 0);
+
+export const rankTitlesBM25 = (
+  candidates: SearchResult[],
+  query: string,
+): RankedResult[] => {
+  const terms = [...new Set(tokenize(query))];
+  if (terms.length === 0 || candidates.length === 0) return [];
+
+  const docs = candidates.map((candidate) => ({
+    candidate,
+    tokens: tokenize(candidate.text || ""),
+  }));
+  const n = docs.length;
+  const avgLength = docs.reduce((sum, d) => sum + d.tokens.length, 0) / n || 1;
+
+  const idf = new Map<string, number>();
+  for (const term of terms) {
+    const df = docs.reduce(
+      (count, d) => (termFrequency(d.tokens, term) > 0 ? count + 1 : count),
+      0,
+    );
+    // The +1 inside the log keeps IDF positive even when every title matches.
+    idf.set(term, Math.log(1 + (n - df + 0.5) / (df + 0.5)));
+  }
+
+  return docs
+    .map(({ candidate, tokens }) => {
+      let score = 0;
+      const lengthNorm = 1 - BM25_B + (BM25_B * tokens.length) / avgLength;
+      for (const term of terms) {
+        const tf = termFrequency(tokens, term);
+        if (tf === 0) continue;
+        score += (idf.get(term) ?? 0) * ((tf * (BM25_K1 + 1)) / (tf + BM25_K1 * lengthNorm));
+      }
+      return { ...candidate, score };
+    })
+    .filter((result) => result.score > 0)
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        (b.created || 0) - (a.created || 0) ||
+        (a.uid < b.uid ? -1 : 1),
+    );
+};
 
 export const handleSearchNodes = async (
   client: RoamClient,
@@ -37,9 +102,8 @@ export const handleSearchNodes = async (
   limit = 50,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> => {
   // MODIFIED-START from getAllReferencesOnPage.ts pattern
-  // — uses clojure.string/includes? for keyword search instead of block/refs
-  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (words.length === 0) {
+  // — fetches all titled nodes, then BM25-ranks them in JS
+  if (tokenize(query).length === 0) {
     return { content: [{ type: "text", text: JSON.stringify({ count: 0, results: [] }) }] };
   }
 
@@ -65,19 +129,15 @@ export const handleSearchNodes = async (
     .filter((r) => r != null && r[0] != null)
     .map(([text, uid, created, author]) => ({ text, uid, created, author }));
 
-  const sorted = allResults
-    .filter((r) => {
-      const titleLower = (r.text || "").toLowerCase();
-      return words.every((w) => titleLower.includes(w));
-    })
-    .sort((a, b) => (b.created || 0) - (a.created || 0))
-    .slice(0, limit);
+  const ranked = rankTitlesBM25(allResults, query)
+    .slice(0, limit)
+    .map((r) => ({ ...r, score: Math.round(r.score * 1000) / 1000 }));
 
   return {
     content: [
       {
         type: "text",
-        text: JSON.stringify({ count: sorted.length, results: sorted }, null, 2),
+        text: JSON.stringify({ count: ranked.length, results: ranked }, null, 2),
       },
     ],
   };
