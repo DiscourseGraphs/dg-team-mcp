@@ -8,9 +8,13 @@ canvas clients pick up writes as if from a remote collaborator.
 ## How it works
 
 A canvas page stores its board at `props["roamjs-query-builder"].tldraw = {store, schema}`
-with a `stateId` nonce. The extension's pull-watch merges any props change carrying an
-unknown `stateId` into open canvases, record by record. So a props write with a fresh
-`stateId` behaves exactly like another collaborator's edit.
+with a `stateId` nonce. By design, the extension's pull-watch merges any props change
+carrying an unknown `stateId` into open canvases, record by record — a props write with a
+fresh `stateId` is *supposed to* behave like another collaborator's edit. **In practice the
+watch does not fire reliably for Local-API props-only writes**, so after every successful
+props write these tools also create and then delete a throwaway block on the canvas page.
+The watch pattern covers `:block/children`, so the touch fires it deterministically and any
+open client ingests the new records promptly (see the open-canvas note under limitations).
 
 These tools do read-modify-write of that blob via `data.page.update`, authoring records
 that match the **deployed** extension's conventions, and validating them headlessly
@@ -56,6 +60,21 @@ Revisit `records.ts` if/when the team ships the `discourse-node` migration to pr
   default relations.
 - Concurrent same-canvas edits race at the whole-props level (last write wins). Fine for
   normal use; don't point two agents at one canvas simultaneously.
+- **Writes to a canvas that is OPEN in Roam** (limitation recorded 2026-08-11, mitigated
+  2026-08-25). The extension's save path serializes its entire in-memory store on any user
+  edit, with no stateId check against what's in props (`useRoamStore.ts` in the plugin) —
+  and its pull-watch is unreliable for our props-only writes, so an open client that never
+  ingested an MCP write used to drop it on the user's next edit (MCP write lands in props →
+  open client stays stale → user nudges any shape → client whole-snapshot-saves → MCP
+  records silently gone). Mitigation, implemented in `write.ts` and verified live: every
+  mutating write now wakes the watch by creating and then deleting a throwaway block on the
+  canvas page, so open clients ingest promptly; mutating tools also report
+  `canvasOpenInRoam` (this machine's Roam only) and `clientNudged` in their results.
+  Residual risk: a human edit within the ~1 s around the MCP write can still race the
+  merge. The client's merge treats record ids absent from the incoming props as deletions,
+  so a human record created in that window can be reverted. The real fix is a
+  merge-before-save guard in the plugin.
+  Full analysis: `dg-prototypes/nested-pages/ROAM-CANVAS-CONCURRENCY.md`.
 
 ## Dev
 
