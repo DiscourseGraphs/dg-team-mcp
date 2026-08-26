@@ -72,6 +72,57 @@ const writeCanvasProps = async (
   return stateId;
 };
 
+// Open-client mitigation (README "Writes to a canvas that is OPEN in Roam"):
+// the extension's ingest pull-watch misses Local-API props-only writes, and its
+// save path whole-snapshot-overwrites without checking the props stateId — so a
+// client that never ingested our records silently drops them on the user's next
+// edit. The watch pattern also covers :block/children, and touching the page's
+// children fires it deterministically, so after every props write we create and
+// then delete a throwaway block on the canvas page to force prompt ingest.
+
+// Keep the throwaway block alive past the client's 350 ms ingest debounce so
+// the create and delete transactions can't collapse into a no-op for the watch.
+const NUDGE_INGEST_DELAY_MS = 750;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const nudgeOpenCanvasClients = async (
+  client: RoamClient,
+  pageUid: string,
+  opts?: { ingestDelayMs?: number },
+): Promise<boolean> => {
+  const created = await client.call<{ uids?: string[] }>("data.block.fromMarkdown", [
+    { location: { "parent-uid": pageUid, order: "last" }, "markdown-string": "-" },
+  ]);
+  const uid = created.result?.uids?.[0];
+  if (!uid) return false;
+  await sleep(opts?.ingestDelayMs ?? NUDGE_INGEST_DELAY_MS);
+  await client.call("data.block.delete", [{ block: { uid } }]);
+  return true;
+};
+
+/**
+ * Is the canvas page visible in Roam on this machine (main window or right
+ * sidebar)? Sees only the local desktop app — another collaborator's open
+ * client is invisible here, which is why the nudge runs unconditionally.
+ */
+export const isCanvasOpenInRoam = async (
+  client: RoamClient,
+  pageUid: string,
+): Promise<boolean | "unknown"> => {
+  try {
+    const [main, sidebar] = await Promise.all([
+      client.call("ui.mainWindow.getOpenView", []),
+      client.call("ui.rightSidebar.getWindows", []),
+    ]);
+    // View descriptors carry the uid under version-dependent keys; a substring
+    // scan over the serialized descriptors is shape-agnostic.
+    return JSON.stringify([main.result ?? null, sidebar.result ?? []]).includes(pageUid);
+  } catch {
+    return "unknown";
+  }
+};
+
 export type MutationHelpers = { pageRecordId: string };
 
 /**
@@ -83,7 +134,14 @@ export const mutateCanvas = async <T>(
   ref: { title?: string; uid?: string },
   ctx: CanvasContext,
   fn: (store: SerializedStore, helpers: MutationHelpers) => T,
-): Promise<T & { stateId: string }> => {
+): Promise<
+  T & {
+    stateId: string;
+    canvasOpenInRoam: boolean | "unknown";
+    clientNudged: boolean;
+    note?: string;
+  }
+> => {
   const state = await readCanvasState(client, ref);
   if (state.format === "legacy-raw") {
     throw new Error(
@@ -103,7 +161,22 @@ export const mutateCanvas = async <T>(
   const result = fn(store, { pageRecordId: getPageRecordId(store) });
   validateStoreRecords(store, ctx);
   const stateId = await writeCanvasProps(client, state, store, schema);
-  return { ...result, stateId };
+  // Both are best-effort: the props write has already succeeded.
+  const [canvasOpenInRoam, clientNudged] = await Promise.all([
+    isCanvasOpenInRoam(client, state.pageUid),
+    nudgeOpenCanvasClients(client, state.pageUid).catch(() => false),
+  ]);
+  return {
+    ...result,
+    stateId,
+    canvasOpenInRoam,
+    clientNudged,
+    ...(canvasOpenInRoam === true
+      ? {
+          note: "Canvas is open in Roam on this machine — wrote and nudged the client to ingest; verify visually.",
+        }
+      : {}),
+  };
 };
 
 /** Create a new canvas page (title per the graph's canvas page format) with an empty snapshot. */
