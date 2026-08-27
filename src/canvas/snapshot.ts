@@ -13,6 +13,7 @@ import type {
 } from "./model.js";
 import { getPageProps, resolvePage } from "./props.js";
 import { shapeAbsoluteOrigin } from "./records.js";
+import { findUnloadableRecords } from "./schema.js";
 
 const RJSQB_KEY = "roamjs-query-builder";
 
@@ -201,5 +202,11 @@ export const summarizeCanvas = (
   summary.texts.sort(byPosition);
   summary.frames.sort(byPosition);
   summary.images.sort(byPosition);
+
+  // Read-back is only verification if it flags what the app would reject.
+  if (state.format === "snapshot") {
+    const issues = findUnloadableRecords(state.store, state.schema, ctx);
+    if (issues.length) summary.warnings = issues;
+  }
   return summary;
 };

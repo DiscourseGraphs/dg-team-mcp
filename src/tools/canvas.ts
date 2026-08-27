@@ -24,6 +24,7 @@ import {
   nextIndex,
   resolveFrame,
   shapeAbsoluteOrigin,
+  shapeNodeTypeId,
 } from "../canvas/records.js";
 import { resolvePage } from "../canvas/props.js";
 import type { CanvasContext, TldrawRecord } from "../canvas/model.js";
@@ -295,8 +296,8 @@ export const handleCanvasConnect = async (
     if (!fromShape) throw new Error(`No shape found on canvas for "${p.from}"`);
     if (!toShape) throw new Error(`No shape found on canvas for "${p.to}"`);
     const { relation, ambiguous } = resolveRelation(ctx, p.relation, {
-      sourceTypeId: String(fromShape.type),
-      destinationTypeId: String(toShape.type),
+      sourceTypeId: shapeNodeTypeId(fromShape),
+      destinationTypeId: shapeNodeTypeId(toShape),
     });
     if (!relation) {
       if (ambiguous?.length) {

@@ -1,6 +1,10 @@
 // Author tldraw 2.4.6 records matching the DEPLOYED extension's conventions.
-// Node shapes use the legacy convention (shape.type = node type id) because the
-// deployed client has no util registered for the newer "discourse-node" type.
+// Node shapes use the unified "discourse-node" type with the node type id in
+// props.nodeTypeId. Relation arrows and their bindings still use the relation
+// type id as shape.type (the client registers one util per relation id).
+// Putting a node type id in shape.type makes the canvas UNOPENABLE on current
+// clients: since discourse schema v5 they have no util for those types, and
+// one invalid record fails validation for the whole snapshot.
 // See canvas/README.md WRITE POLICY.
 
 import { nanoid, customAlphabet } from "nanoid";
@@ -106,12 +110,36 @@ const baseShape = ({
   meta: {},
 });
 
-/** Rough size heuristic; the app recomputes nothing on load, so keep it sane. */
+export const DISCOURSE_NODE_SHAPE_TYPE = "discourse-node";
+
+/**
+ * Node type id of a node shape under either convention: modern shapes carry it
+ * in props.nodeTypeId, legacy shapes as shape.type. Mirrors the client's
+ * getDiscourseNodeTypeId (DiscourseNodeUtil.tsx).
+ */
+export const shapeNodeTypeId = (shape: TldrawRecord): string => {
+  const props = shape.props as { nodeTypeId?: string } | undefined;
+  return props?.nodeTypeId || String(shape.type ?? "");
+};
+
+// Headless approximation of the client's card measurement
+// (calcCanvasNodeSizeAndImg → measureCanvasNodeText: a DOM div at Inter 16px,
+// line-height 1.35, 40px padding on every side, width fit-content capped at
+// 400px). 7.7px average glyph width for Inter 16px; ragged word wrapping
+// leaves ~7% of each line unused.
+const NODE_MAX_WIDTH = 400;
+const NODE_PADDING = 40;
+const NODE_LINE_HEIGHT = 16 * 1.35;
+const AVG_GLYPH_WIDTH = 7.7;
+const LINE_FILL = 0.93;
+
+/** Size a node card the way the app would; the app recomputes nothing on load. */
 export const estimateNodeSize = (title: string): { w: number; h: number } => {
-  const len = title.length;
-  const w = Math.max(200, Math.min(380, 40 + 9 * Math.min(len, 40)));
-  const lines = Math.max(1, Math.ceil(len / 34));
-  const h = Math.min(220, 60 + 20 * (lines - 1));
+  const textWidth = Math.ceil(title.length * AVG_GLYPH_WIDTH);
+  const lineWidth = (NODE_MAX_WIDTH - 2 * NODE_PADDING) * LINE_FILL;
+  const lines = Math.max(1, Math.ceil(textWidth / lineWidth));
+  const w = lines > 1 ? NODE_MAX_WIDTH : Math.max(160, textWidth + 2 * NODE_PADDING);
+  const h = Math.round(2 * NODE_PADDING + lines * NODE_LINE_HEIGHT);
   return { w, h };
 };
 
@@ -134,8 +162,24 @@ export const createNodeShapeRecord = ({
 }): TldrawRecord => {
   const { w, h } = estimateNodeSize(title);
   return {
-    ...baseShape({ id: newShapeId(), type: nodeType.id, parentId, index, x, y }),
-    props: { w, h, uid, title, size: "s", fontFamily: "sans", imageUrl: "" },
+    ...baseShape({
+      id: newShapeId(),
+      type: DISCOURSE_NODE_SHAPE_TYPE,
+      parentId,
+      index,
+      x,
+      y,
+    }),
+    props: {
+      w,
+      h,
+      uid,
+      title,
+      nodeTypeId: nodeType.id,
+      size: "s",
+      fontFamily: "sans",
+      imageUrl: "",
+    },
   };
 };
 

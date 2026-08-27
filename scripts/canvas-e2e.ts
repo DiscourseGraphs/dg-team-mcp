@@ -21,6 +21,7 @@ import {
   expandDeletionSet,
   generateRoamUid,
   nextIndex,
+  shapeNodeTypeId,
 } from "../src/canvas/records.js";
 import { resolvePage } from "../src/canvas/props.js";
 
@@ -80,9 +81,10 @@ const main = async () => {
   const fresh = await readCanvasState(client, { uid: pageUid });
   check("create: snapshot format", fresh.format === "snapshot");
   check(
-    "create: schema has graph's custom sequences",
-    fresh.schema?.sequences?.[`com.tldraw.shape.${evd.id}`] === 0 &&
-      fresh.schema?.sequences?.["com.roam-research.discourse-graphs"] === 3,
+    "create: schema mirrors a current client save",
+    fresh.schema?.sequences?.["com.tldraw.shape.discourse-node"] === 0 &&
+      fresh.schema?.sequences?.["com.roam-research.discourse-graphs"] === 5 &&
+      fresh.schema?.sequences?.[`com.tldraw.shape.${evd.id}`] === undefined,
     fresh.schema?.sequences,
   );
 
@@ -117,14 +119,22 @@ const main = async () => {
   const evdRes = await addNode("EVD", `e2e evidence ${STAMP}`, 100, 100);
   const clmRes = await addNode("Claim", `e2e claim ${STAMP}`, 560, 300);
   check("add_node: EVD title formatted", evdRes.nodeTitle.includes("EVD"), evdRes.nodeTitle);
+  const evdShape = (await readCanvasState(client, { uid: pageUid })).store[evdRes.shapeId];
+  check(
+    "add_node: modern shape convention (discourse-node + props.nodeTypeId)",
+    evdShape?.type === "discourse-node" &&
+      (evdShape?.props as { nodeTypeId?: string } | undefined)?.nodeTypeId ===
+        resolveNodeType(ctx, "EVD")!.id,
+    evdShape,
+  );
 
   // connect
   const connectRes = await mutateCanvas(client, { uid: pageUid }, ctx, (store, helpers) => {
     const fromShape = store[evdRes.shapeId]!;
     const toShape = store[clmRes.shapeId]!;
     const { relation } = resolveRelation(ctx, "Supports", {
-      sourceTypeId: String(fromShape.type),
-      destinationTypeId: String(toShape.type),
+      sourceTypeId: shapeNodeTypeId(fromShape),
+      destinationTypeId: shapeNodeTypeId(toShape),
     });
     if (!relation) throw new Error("Supports not resolvable");
     const records = createRelationRecords({
@@ -165,6 +175,7 @@ const main = async () => {
   );
   check("readback: text present", summary.texts.some((t) => t.text === "written by canvas e2e"));
   check("readback: stateId changed", after.stateId !== fresh.stateId);
+  check("readback: no loadability warnings", summary.warnings === undefined, summary.warnings);
 
   // node cascade delete (arrow + 2 bindings)
   const cascade = expandDeletionSet(after.store, [evdRes.shapeId]);

@@ -108,4 +108,6 @@ export type CanvasSummary = {
     frame?: string;
   }>;
   otherShapes: Array<{ shapeId: string; type: string; frame?: string }>;
+  /** Records the current Roam client would refuse to load. One bad record makes the whole canvas unopenable. */
+  warnings?: string[];
 };
