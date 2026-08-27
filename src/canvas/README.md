@@ -68,6 +68,21 @@ record would keep the canvas from opening. Without a warning, a clean read-back 
 the app can load the canvas; read-back alone is NOT proof that a write is visually
 correct.
 
+## Multi-page boards, text labels, arrows (added 2026-08-27)
+
+- A canvas can hold several tldraw pages. `canvas_read` lists them (`pages`) and, on
+  multi-page boards, names every item's page. Shape-creating writes take an optional
+  `page` (name or record id); with several pages and no `page`, the write fails and
+  lists the pages rather than dropping shapes on an arbitrary page. `canvas_connect`
+  refuses cross-page arrows; `canvas_move` never changes a shape's page (un-framing
+  re-parents to the shape's own page, and a target frame must be on the same page).
+- `canvas_add_text` wraps: labels longer than 400px get `autoSize: false` with a real
+  width (tldraw lays autoSize text out on one line, so long labels used to run across
+  the canvas). Callers can pass `width` to pick the wrap width.
+- `canvas_move` re-aims arrows: pass `start`/`end` absolute points instead of `x`/`y`.
+  Terminals bound to a shape (relation arrows from `canvas_connect`) follow their shape
+  and are refused; delete and reconnect those instead.
+
 ## Known limitations (v1)
 
 - **Legacy-raw canvases are read-only** (pre-`{store,schema}` snapshots). Open them in Roam

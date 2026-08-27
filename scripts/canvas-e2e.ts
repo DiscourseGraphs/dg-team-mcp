@@ -149,17 +149,27 @@ const main = async () => {
   });
   check("connect: Supports resolved", !!ctx.relations[connectRes.relationId], connectRes);
 
-  // text
-  await mutateCanvas(client, { uid: pageUid }, ctx, (store, helpers) => {
+  // text: short label stays autoSize, long label wraps
+  const LONG_LABEL =
+    "a paragraph-length annotation that used to render as one enormous line across the canvas";
+  const textRes = await mutateCanvas(client, { uid: pageUid }, ctx, (store, helpers) => {
     const t = createTextShapeRecord({
       text: "written by canvas e2e",
       x: 100,
       y: 500,
-      parentId: helpers.pageRecordId,
+      parentId: helpers.resolveTargetPage(undefined),
       index: nextIndex(store),
     });
     store[t.id] = t;
-    return {};
+    const long = createTextShapeRecord({
+      text: LONG_LABEL,
+      x: 100,
+      y: 560,
+      parentId: helpers.resolveTargetPage(undefined),
+      index: nextIndex(store),
+    });
+    store[long.id] = long;
+    return { longId: long.id };
   });
 
   // read back
@@ -174,6 +184,14 @@ const main = async () => {
     summary.relations,
   );
   check("readback: text present", summary.texts.some((t) => t.text === "written by canvas e2e"));
+  const longShape = after.store[textRes.longId];
+  check(
+    "add_text: long label wraps (autoSize false, w 400)",
+    (longShape?.props as { autoSize?: boolean; w?: number } | undefined)?.autoSize === false &&
+      (longShape?.props as { w?: number } | undefined)?.w === 400,
+    longShape?.props,
+  );
+  check("readback: pages listed", summary.pages.length === 1, summary.pages);
   check("readback: stateId changed", after.stateId !== fresh.stateId);
   check("readback: no loadability warnings", summary.warnings === undefined, summary.warnings);
 

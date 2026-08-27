@@ -12,7 +12,7 @@ import type {
   TldrawRecord,
 } from "./model.js";
 import { getPageProps, resolvePage } from "./props.js";
-import { shapeAbsoluteOrigin } from "./records.js";
+import { listPages, shapeAbsoluteOrigin, shapePageId } from "./records.js";
 import { findUnloadableRecords } from "./schema.js";
 
 const RJSQB_KEY = "roamjs-query-builder";
@@ -72,10 +72,12 @@ export const summarizeCanvas = (
   const assets = records.filter((r) => r.typeName === "asset");
   const assetById = new Map(assets.map((a) => [a.id, a]));
 
+  const pages = listPages(state.store);
   const summary: CanvasSummary = {
     pageUid: state.pageUid,
     title: state.title,
     format: state.format,
+    pages,
     nodes: [],
     relations: [],
     texts: [],
@@ -94,6 +96,13 @@ export const summarizeCanvas = (
   const parentFrame = (shape: TldrawRecord): string | undefined =>
     frameName.get(str(shape.parentId));
   const absolute = (shape: TldrawRecord) => shapeAbsoluteOrigin(state.store, shape.id);
+  // Only annotate items with their tldraw page when there is more than one.
+  const pageNameById = new Map(pages.map((p) => [p.id, p.name]));
+  const parentPage = (shape: TldrawRecord): string | undefined => {
+    if (pages.length < 2) return undefined;
+    const pageId = shapePageId(state.store, shape.id);
+    return pageId ? pageNameById.get(pageId) : undefined;
+  };
 
   for (const shape of shapes) {
     const type = str(shape.type);
@@ -115,6 +124,7 @@ export const summarizeCanvas = (
         w: num(props.w),
         h: num(props.h),
         frame: parentFrame(shape),
+        page: parentPage(shape),
       });
       nodeShapeIds.add(shape.id);
       uidByShapeId.set(shape.id, str(props.uid));
@@ -166,6 +176,7 @@ export const summarizeCanvas = (
         x: pos.x,
         y: pos.y,
         frame: parentFrame(shape),
+        page: parentPage(shape),
       });
     } else if (type === "frame") {
       const pos = absolute(shape);
@@ -176,6 +187,7 @@ export const summarizeCanvas = (
         y: pos.y,
         w: num(props.w),
         h: num(props.h),
+        page: parentPage(shape),
       });
     } else if (type === "image") {
       const pos = absolute(shape);
@@ -190,9 +202,15 @@ export const summarizeCanvas = (
         w: num(props.w),
         h: num(props.h),
         frame: parentFrame(shape),
+        page: parentPage(shape),
       });
     } else {
-      summary.otherShapes.push({ shapeId: shape.id, type, frame: parentFrame(shape) });
+      summary.otherShapes.push({
+        shapeId: shape.id,
+        type,
+        frame: parentFrame(shape),
+        page: parentPage(shape),
+      });
     }
   }
 

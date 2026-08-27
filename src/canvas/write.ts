@@ -14,7 +14,13 @@ import type {
   SerializedStore,
 } from "./model.js";
 import { readCanvasState } from "./snapshot.js";
-import { getPageRecordId, generateRoamUid, newStateId } from "./records.js";
+import {
+  getPageRecordId,
+  generateRoamUid,
+  newStateId,
+  resolveTargetPage,
+  shapePageId,
+} from "./records.js";
 import { getAddReferencedNodeActions } from "./context.js";
 import { EMPTY_CANVAS_SNAPSHOT } from "./fixtures/emptyCanvas.js";
 import {
@@ -134,7 +140,15 @@ export const isCanvasOpenInRoam = async (
   }
 };
 
-export type MutationHelpers = { pageRecordId: string };
+export type MutationHelpers = {
+  /** First tldraw page in board order (single-page canvases: the page). */
+  pageRecordId: string;
+  /** Resolve an optional page name/id to a page record id; throws with the
+   *  page list when the canvas has several pages and no ref was given. */
+  resolveTargetPage: (ref?: string) => string;
+  /** The page record id a shape ultimately parents to. */
+  shapePageId: (shapeId: string) => string | undefined;
+};
 
 /**
  * Fresh-read the canvas, apply `fn` to a mutable copy of the store, validate,
@@ -169,7 +183,11 @@ export const mutateCanvas = async <T>(
     store = structuredClone(state.store);
     schema = state.schema as SerializedSchema;
   }
-  const result = fn(store, { pageRecordId: getPageRecordId(store) });
+  const result = fn(store, {
+    pageRecordId: getPageRecordId(store),
+    resolveTargetPage: (ref?: string) => resolveTargetPage(store, ref),
+    shapePageId: (shapeId: string) => shapePageId(store, shapeId),
+  });
   validateStoreRecords(store, ctx);
   assertRecordsLoadable(store, schema, ctx);
   const stateId = await writeCanvasProps(client, state, store, schema);
