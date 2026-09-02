@@ -102,9 +102,19 @@ test("nextIndex returns a key above the current max", () => {
   assert.ok(idx > "a2", `${idx} should sort after a2`);
 });
 
-test("estimateNodeSize clamps to sane bounds", () => {
+test("estimateNodeSize mirrors the app's card measurement", () => {
+  // Single line: fit-content width (min 160), one line of text plus 80px padding.
   const small = estimateNodeSize("x");
-  assert.ok(small.w >= 200 && small.w <= 380);
+  assert.ok(small.w >= 160 && small.w < 400, `w=${small.w}`);
+  assert.ok(small.h >= 100 && small.h <= 105, `h=${small.h}`);
+  // Typical discourse title wraps: width caps at the app's 400px max.
+  const typical = estimateNodeSize(
+    "[[ISS]] - Model branched actin network assembly under load in Smoldyn",
+  );
+  assert.equal(typical.w, 400);
+  assert.ok(typical.h > 100 && typical.h < 200, `h=${typical.h}`);
+  // Long titles keep growing in height like the app (no artificial cap).
   const big = estimateNodeSize("x".repeat(500));
-  assert.ok(big.w <= 380 && big.h <= 220);
+  assert.equal(big.w, 400);
+  assert.ok(big.h > 300, `h=${big.h}`);
 });

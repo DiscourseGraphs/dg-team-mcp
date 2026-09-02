@@ -34,20 +34,54 @@ returns `null` for `:block/props`; only `q` returns props.
 
 ## WRITE POLICY (important)
 
-1. Node shapes use the **legacy convention** (`shape.type = <nodeTypeId>`), not the newer
-   `discourse-node` type — the deployed client has no util registered for the latter.
-   Relations are arrow-fork shapes (`shape.type = <relationId>`) plus two binding records.
-2. Arrow props are exactly tldraw 2.4.6's `arrowShapeProps` key set — do not add keys
+1. Node shapes use the **unified convention**: `shape.type = "discourse-node"` with the
+   node type id in `props.nodeTypeId`. Relations are arrow-fork shapes
+   (`shape.type = <relationId>`) plus two binding records; that per-type convention is
+   still what the client registers for relations. The conventions are NOT symmetric.
+   History: until 2026-08 these tools wrote the legacy node convention
+   (`shape.type = <nodeTypeId>`), which the client stopped registering at discourse
+   schema v5 (`MigrateNodeTypeToDiscourseNode` in the plugin's
+   `discourseRelationMigrations.ts`). The client only rewrites legacy node shapes when
+   the snapshot declares v4 or below. Writing one into a v5 snapshot fails the client's
+   `shape.type` validation, and one invalid record keeps the WHOLE canvas from opening.
+   That corrupted a real canvas on 2026-08-26 (fixed by deleting the shapes).
+2. Every mutation passes two gates before the props write: headless tldraw 2.4.6 record
+   validation, and a loadability check (`assertRecordsLoadable` in `schema.ts`) that
+   refuses any shape or binding type the current client would reject given the
+   snapshot's declared discourse schema version.
+3. Arrow props are exactly tldraw 2.4.6's `arrowShapeProps` key set — do not add keys
    (validators are strict).
-3. Preserve the persisted `schema` verbatim; preserve every sibling props key
+4. Preserve the persisted `schema` verbatim; preserve every sibling props key
    (`data.page.update` replaces the whole `:block/props`, and the app treats record ids
    absent from the incoming store as **deletions**). Every write fresh-reads immediately
-   before mutating to keep that window minimal.
-4. Fresh `stateId` per write.
-5. Writes go **directly** through `data.page.update`, not the markdown-branch
+   before mutating to keep that window minimal. Bootstrap schemas (new canvases) mirror
+   a current client save: discourse sequence v5, `discourse-node`/`discourse-relation`
+   plus per-relation and "Add <Token>" sequences, and no per-node-type sequences.
+5. Fresh `stateId` per write.
+6. Writes go **directly** through `data.page.update`, not the markdown-branch
    write-visibility bridge (which only models block appends under a parent).
+7. Node card sizing mirrors the app's measurement (Inter 16px, line-height 1.35, 40px
+   padding, 400px max width) so MCP-created cards match app-created ones.
 
-Revisit `records.ts` if/when the team ships the `discourse-node` migration to production.
+`canvas_read` runs the same loadability check and returns a `warnings` array when any
+record would keep the canvas from opening. Without a warning, a clean read-back means
+the app can load the canvas; read-back alone is NOT proof that a write is visually
+correct.
+
+## Multi-page boards, text labels, arrows (added 2026-08-27)
+
+- A canvas can hold several tldraw pages. `canvas_read` lists them (`pages`) and, on
+  multi-page boards, names every item's page. Shape-creating writes take an optional
+  `page` (name or record id); with several pages and no `page`, the write fails and
+  lists the pages rather than dropping shapes on an arbitrary page. `canvas_connect`
+  refuses cross-page arrows; `canvas_move` never changes a shape's page (un-framing
+  re-parents to the shape's own page, and a target frame must be on the same page).
+- `canvas_add_text` wraps: labels longer than 400px get `autoSize: false` with a real
+  width (tldraw lays autoSize text out on one line, so long labels used to run across
+  the canvas). Callers can pass `width` to pick the wrap width.
+- `canvas_move` re-aims arrows: pass `start`/`end` absolute points instead of `x`/`y`.
+  Terminals bound to a shape (relation arrows from `canvas_connect`) follow their shape
+  and are refused; delete and reconnect those instead.
 
 ## Known limitations (v1)
 

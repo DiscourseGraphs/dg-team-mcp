@@ -74,6 +74,9 @@ export type CanvasSummary = {
   pageUid: string;
   title: string;
   format: CanvasPageState["format"];
+  /** Tldraw pages on this board, in board order. `page` on items below names
+   *  one of these; it is only set when the board has more than one page. */
+  pages: Array<{ id: string; name: string; index: string }>;
   nodes: Array<{
     shapeId: string;
     nodeTypeId: string;
@@ -85,6 +88,7 @@ export type CanvasSummary = {
     w: number;
     h: number;
     frame?: string;
+    page?: string;
   }>;
   relations: Array<{
     shapeId: string;
@@ -95,8 +99,23 @@ export type CanvasSummary = {
     fromUid?: string;
     toUid?: string;
   }>;
-  texts: Array<{ shapeId: string; text: string; x: number; y: number; frame?: string }>;
-  frames: Array<{ shapeId: string; name: string; x: number; y: number; w: number; h: number }>;
+  texts: Array<{
+    shapeId: string;
+    text: string;
+    x: number;
+    y: number;
+    frame?: string;
+    page?: string;
+  }>;
+  frames: Array<{
+    shapeId: string;
+    name: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    page?: string;
+  }>;
   images: Array<{
     shapeId: string;
     name: string;
@@ -106,6 +125,9 @@ export type CanvasSummary = {
     w: number;
     h: number;
     frame?: string;
+    page?: string;
   }>;
-  otherShapes: Array<{ shapeId: string; type: string; frame?: string }>;
+  otherShapes: Array<{ shapeId: string; type: string; frame?: string; page?: string }>;
+  /** Records the current Roam client would refuse to load. One bad record makes the whole canvas unopenable. */
+  warnings?: string[];
 };

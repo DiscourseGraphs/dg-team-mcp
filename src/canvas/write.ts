@@ -14,10 +14,21 @@ import type {
   SerializedStore,
 } from "./model.js";
 import { readCanvasState } from "./snapshot.js";
-import { getPageRecordId, generateRoamUid, newStateId } from "./records.js";
+import {
+  getPageRecordId,
+  generateRoamUid,
+  newStateId,
+  resolveTargetPage,
+  shapePageId,
+} from "./records.js";
 import { getAddReferencedNodeActions } from "./context.js";
 import { EMPTY_CANVAS_SNAPSHOT } from "./fixtures/emptyCanvas.js";
-import { validateStoreRecords } from "./schema.js";
+import {
+  assertRecordsLoadable,
+  DISCOURSE_SEQUENCE_ID,
+  DISCOURSE_SEQUENCE_VERSION,
+  validateStoreRecords,
+} from "./schema.js";
 import { resolvePage } from "./props.js";
 
 const RJSQB_KEY = "roamjs-query-builder";
@@ -27,24 +38,30 @@ const RJSQB_KEY = "roamjs-query-builder";
 const BUILTIN_SEQUENCE_PATTERN =
   /^com\.tldraw\.(store|document|asset|camera|instance|instance_page_state|instance_presence|page|pointer|shape|binding)$|^com\.tldraw\.shape\.(arrow|bookmark|draw|embed|frame|geo|group|highlight|image|line|note|text|video)$|^com\.tldraw\.asset\.(image|video|bookmark)$|^com\.tldraw\.binding\.arrow$/;
 
-const DISCOURSE_SEQUENCE_ID = "com.roam-research.discourse-graphs";
-
 export const buildBootstrapSnapshot = (ctx: CanvasContext): CanvasSnapshot => {
   const fixture = EMPTY_CANVAS_SNAPSHOT;
   const sequences: Record<string, number> = {};
   for (const [id, version] of Object.entries(fixture.schema.sequences)) {
     if (BUILTIN_SEQUENCE_PATTERN.test(id)) sequences[id] = version;
   }
-  sequences[DISCOURSE_SEQUENCE_ID] = fixture.schema.sequences[DISCOURSE_SEQUENCE_ID] ?? 3;
+  // Custom sequences mirror what a current client saves (verified against an
+  // app-saved schema, graph akamatsulab 2026-08-27): the unified node and
+  // relation types plus one shape+binding pair per relation id and per
+  // "Add <Token>" action. No per-node-type, page-node, or blck-node sequences;
+  // since discourse schema v5 the client does not register those.
+  sequences[DISCOURSE_SEQUENCE_ID] = DISCOURSE_SEQUENCE_VERSION;
   const customShapeIds = [
-    ...Object.keys(ctx.nodes),
-    "page-node",
-    "blck-node",
+    "discourse-node",
+    "discourse-relation",
     ...Object.keys(ctx.relations),
     ...getAddReferencedNodeActions(ctx),
   ];
   for (const id of customShapeIds) sequences[`com.tldraw.shape.${id}`] = 0;
-  for (const id of [...Object.keys(ctx.relations), ...getAddReferencedNodeActions(ctx)]) {
+  for (const id of [
+    "discourse-relation",
+    ...Object.keys(ctx.relations),
+    ...getAddReferencedNodeActions(ctx),
+  ]) {
     sequences[`com.tldraw.binding.${id}`] = 0;
   }
   return {
@@ -123,7 +140,15 @@ export const isCanvasOpenInRoam = async (
   }
 };
 
-export type MutationHelpers = { pageRecordId: string };
+export type MutationHelpers = {
+  /** First tldraw page in board order (single-page canvases: the page). */
+  pageRecordId: string;
+  /** Resolve an optional page name/id to a page record id; throws with the
+   *  page list when the canvas has several pages and no ref was given. */
+  resolveTargetPage: (ref?: string) => string;
+  /** The page record id a shape ultimately parents to. */
+  shapePageId: (shapeId: string) => string | undefined;
+};
 
 /**
  * Fresh-read the canvas, apply `fn` to a mutable copy of the store, validate,
@@ -158,8 +183,13 @@ export const mutateCanvas = async <T>(
     store = structuredClone(state.store);
     schema = state.schema as SerializedSchema;
   }
-  const result = fn(store, { pageRecordId: getPageRecordId(store) });
+  const result = fn(store, {
+    pageRecordId: getPageRecordId(store),
+    resolveTargetPage: (ref?: string) => resolveTargetPage(store, ref),
+    shapePageId: (shapeId: string) => shapePageId(store, shapeId),
+  });
   validateStoreRecords(store, ctx);
+  assertRecordsLoadable(store, schema, ctx);
   const stateId = await writeCanvasProps(client, state, store, schema);
   // Both are best-effort: the props write has already succeeded.
   const [canvasOpenInRoam, clientNudged] = await Promise.all([
