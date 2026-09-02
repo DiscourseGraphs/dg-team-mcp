@@ -22,6 +22,7 @@ import {
   expandDeletionSet,
   generateRoamUid,
   nextIndex,
+  repointArrow,
   resolveFrame,
   shapeAbsoluteOrigin,
   shapeNodeTypeId,
@@ -44,6 +45,12 @@ const graphField = z
 const canvasField = z
   .string()
   .describe("Canvas page title (e.g. 'Canvas/My Map') or its 9-char page uid");
+const pageField = z
+  .string()
+  .optional()
+  .describe(
+    "Tldraw page to target (name or page record id), for canvases with several pages — see canvas_read `pages`. Omit on single-page canvases.",
+  );
 
 // Config discovery does several datalog calls + a search; cache briefly per graph.
 const ctxCache = new Map<string, { ctx: CanvasContext; at: number }>();
@@ -127,7 +134,7 @@ export const CanvasReadSchema = z.object({
     .describe("Shape ids to also return as raw tldraw records"),
 });
 export const canvasReadDescription =
-  "Read a canvas: discourse nodes (Roam page uid, title, type, absolute position, containing frame), typed relations between them, text shapes, frames, and images (with filename + URL). Optionally include raw tldraw records for specific shape ids.";
+  "Read a canvas: discourse nodes (Roam page uid, title, type, absolute position, containing frame), typed relations between them, text shapes, frames, and images (with filename + URL). Lists the board's tldraw pages; on multi-page boards every item names its page. Returns `warnings` for records the Roam app would refuse to load. Optionally include raw tldraw records for specific shape ids.";
 export const handleCanvasRead = async (
   client: RoamClient,
   nickname: string,
@@ -183,6 +190,7 @@ export const CanvasAddNodeSchema = z.object({
     .describe("Title or uid of an existing Roam page to place on the canvas"),
   x: z.number().optional(),
   y: z.number().optional(),
+  page: pageField,
 });
 export const canvasAddNodeDescription =
   "Add a discourse node to a canvas. Either reference an existing Roam page (existing_page = title or uid) or provide node_type + text to create the node page (title formatted per the type's format string; v1 does not fill {Source}-style referenced tokens or insert templates). Returns the new shape id and node page uid.";
@@ -240,15 +248,23 @@ export const handleCanvasAddNode = async (
 
   const finalNodeType = nodeType;
   const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store, helpers) => {
+    const targetPage = helpers.resolveTargetPage(p.page);
     const existingShape = Object.values(store).find(
-      (r) => r.typeName === "shape" && (r.props as { uid?: string } | undefined)?.uid === pageUid,
+      (r) =>
+        r.typeName === "shape" &&
+        (r.props as { uid?: string } | undefined)?.uid === pageUid &&
+        helpers.shapePageId(r.id) === targetPage,
     );
     if (existingShape) {
-      throw new Error(`"${title}" is already on this canvas (shape ${existingShape.id}).`);
+      throw new Error(`"${title}" is already on this page (shape ${existingShape.id}).`);
     }
     let maxY = 0;
     for (const r of Object.values(store)) {
-      if (r.typeName === "shape" && typeof r.y === "number")
+      if (
+        r.typeName === "shape" &&
+        typeof r.y === "number" &&
+        helpers.shapePageId(r.id) === targetPage
+      )
         maxY = Math.max(maxY, r.y + ((r.props as { h?: number })?.h ?? 0));
     }
     const shape = createNodeShapeRecord({
@@ -257,7 +273,7 @@ export const handleCanvasAddNode = async (
       title,
       x: p.x ?? 100,
       y: p.y ?? (maxY ? maxY + 60 : 100),
-      parentId: helpers.pageRecordId,
+      parentId: targetPage,
       index: nextIndex(store),
     });
     store[shape.id] = shape;
@@ -295,6 +311,13 @@ export const handleCanvasConnect = async (
     const toShape = findNodeShape(store, p.to);
     if (!fromShape) throw new Error(`No shape found on canvas for "${p.from}"`);
     if (!toShape) throw new Error(`No shape found on canvas for "${p.to}"`);
+    const fromPage = helpers.shapePageId(fromShape.id);
+    const toPage = helpers.shapePageId(toShape.id);
+    if (fromPage && toPage && fromPage !== toPage) {
+      throw new Error(
+        "Cannot connect shapes on different tldraw pages — arrows cannot span pages.",
+      );
+    }
     const { relation, ambiguous } = resolveRelation(ctx, p.relation, {
       sourceTypeId: shapeNodeTypeId(fromShape),
       destinationTypeId: shapeNodeTypeId(toShape),
@@ -320,7 +343,7 @@ export const handleCanvasConnect = async (
       relation,
       fromShape,
       toShape,
-      parentId: helpers.pageRecordId,
+      parentId: fromPage ?? helpers.pageRecordId,
       index: nextIndex(store),
     });
     for (const r of records) store[r.id] = r;
@@ -336,8 +359,15 @@ export const CanvasAddTextSchema = z.object({
   text: z.string(),
   x: z.number().optional(),
   y: z.number().optional(),
+  width: z
+    .number()
+    .positive()
+    .optional()
+    .describe("Wrap the text at this width in canvas units. Default: one line up to 400, then wrap at 400."),
+  page: pageField,
 });
-export const canvasAddTextDescription = "Add a free-floating text label to a canvas.";
+export const canvasAddTextDescription =
+  "Add a free-floating text label to a canvas. Long labels wrap at `width` (default 400) instead of running across the canvas on one line.";
 export const handleCanvasAddText = async (
   client: RoamClient,
   nickname: string,
@@ -350,8 +380,9 @@ export const handleCanvasAddText = async (
       text: p.text,
       x: p.x ?? 100,
       y: p.y ?? 100,
-      parentId: helpers.pageRecordId,
+      parentId: helpers.resolveTargetPage(p.page),
       index: nextIndex(store),
+      width: p.width,
     });
     store[shape.id] = shape;
     return { shapeId: shape.id };
@@ -368,6 +399,7 @@ export const CanvasCreateFrameSchema = z.object({
   y: z.number().optional(),
   w: z.number().optional(),
   h: z.number().optional(),
+  page: pageField,
 });
 export const canvasCreateFrameDescription = "Add a named frame (group region) to a canvas.";
 export const handleCanvasCreateFrame = async (
@@ -384,7 +416,7 @@ export const handleCanvasCreateFrame = async (
       y: p.y ?? 0,
       w: p.w ?? 800,
       h: p.h ?? 600,
-      parentId: helpers.pageRecordId,
+      parentId: helpers.resolveTargetPage(p.page),
       index: nextIndex(store),
     });
     store[shape.id] = shape;
@@ -394,11 +426,24 @@ export const handleCanvasCreateFrame = async (
 };
 
 // ── canvas_move ─────────────────────────────────────────────────────────────
+const pointSchema = z.object({ x: z.number(), y: z.number() });
 export const CanvasMoveSchema = z.object({
   graph: graphField,
   canvas: canvasField,
   moves: z
-    .array(z.object({ shape_id: z.string(), x: z.number(), y: z.number() }))
+    .array(
+      z.object({
+        shape_id: z.string(),
+        x: z.number().optional(),
+        y: z.number().optional(),
+        start: pointSchema
+          .optional()
+          .describe("Arrows only: new absolute start point (re-aims the arrow)"),
+        end: pointSchema
+          .optional()
+          .describe("Arrows only: new absolute end point (re-aims the arrow)"),
+      }),
+    )
     .min(1),
   into_frame: z
     .string()
@@ -406,7 +451,7 @@ export const CanvasMoveSchema = z.object({
     .describe("Frame shape id or name to move the shapes into, or 'page' to un-frame them"),
 });
 export const canvasMoveDescription =
-  "Move shapes to new positions. x/y are ALWAYS absolute canvas coordinates (converted to frame-local storage automatically). Pass into_frame (a frame's shape id or name) to move the shapes into that frame; pass into_frame:'page' to pop them out to the top level. Omit into_frame to reposition within the current parent.";
+  "Move shapes to new positions, or re-aim arrows. All coordinates are ALWAYS absolute canvas coordinates (converted to frame-local storage automatically). Pass x/y to move a shape. For an arrow, pass start and/or end points instead to re-aim it (bound terminals, e.g. from canvas_connect, follow their shape and cannot be re-aimed). Pass into_frame (a frame's shape id or name) to move the shapes into that frame; pass into_frame:'page' to pop them out to the top level.";
 export const handleCanvasMove = async (
   client: RoamClient,
   nickname: string,
@@ -415,31 +460,56 @@ export const handleCanvasMove = async (
   const p = CanvasMoveSchema.parse(args);
   const ctx = await getCtx(client, nickname);
   const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store, helpers) => {
-    let targetParentId: string | undefined;
+    let targetFrameId: string | undefined;
+    let unframe = false;
     let frameName: string | undefined;
     if (p.into_frame && p.into_frame.toLowerCase() !== "page") {
       const frame = resolveFrame(store, p.into_frame);
       if (!frame) throw new Error(`No frame named or with id "${p.into_frame}" on this canvas.`);
-      targetParentId = frame.id;
+      targetFrameId = frame.id;
       frameName = String((frame.props as { name?: string }).name ?? frame.id);
     } else if (p.into_frame) {
-      targetParentId = helpers.pageRecordId;
+      unframe = true;
     }
+    let repointed = 0;
     for (const move of p.moves) {
       const shape = store[move.shape_id];
       if (!shape || shape.typeName !== "shape")
         throw new Error(`Shape not found: ${move.shape_id}`);
-      const parentId = targetParentId ?? (shape.parentId as string) ?? helpers.pageRecordId;
+      if (move.start || move.end) {
+        if (move.x !== undefined || move.y !== undefined) {
+          throw new Error(
+            `${move.shape_id}: pass either x/y or start/end, not both (start/end place the arrow).`,
+          );
+        }
+        repointArrow(store, move.shape_id, { start: move.start, end: move.end });
+        repointed += 1;
+        continue;
+      }
+      if (move.x === undefined || move.y === undefined) {
+        throw new Error(`${move.shape_id}: pass x and y (or start/end for an arrow).`);
+      }
+      // A shape never changes tldraw page: un-framing re-parents to ITS page,
+      // and a target frame must live on the same page as the shape.
+      const shapePage = helpers.shapePageId(shape.id) ?? helpers.pageRecordId;
+      if (targetFrameId && helpers.shapePageId(targetFrameId) !== shapePage) {
+        throw new Error(
+          `Frame "${frameName}" is on a different tldraw page than shape ${move.shape_id}; cross-page moves are not supported.`,
+        );
+      }
+      const parentId =
+        targetFrameId ?? (unframe ? shapePage : ((shape.parentId as string) ?? shapePage));
       const origin = parentId.startsWith("shape:")
         ? shapeAbsoluteOrigin(store, parentId)
         : { x: 0, y: 0 };
       shape.parentId = parentId;
       shape.x = move.x - origin.x;
       shape.y = move.y - origin.y;
-      if (targetParentId) shape.index = nextIndex(store);
+      if (targetFrameId || unframe) shape.index = nextIndex(store);
     }
     return {
-      moved: p.moves.length,
+      moved: p.moves.length - repointed,
+      ...(repointed ? { repointed } : {}),
       ...(p.into_frame ? { intoFrame: frameName ?? "page" } : {}),
     };
   });
