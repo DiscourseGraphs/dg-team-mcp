@@ -79,6 +79,7 @@ export const summarizeCanvas = (
     format: state.format,
     pages,
     nodes: [],
+    blocks: [],
     relations: [],
     texts: [],
     frames: [],
@@ -113,19 +114,33 @@ export const summarizeCanvas = (
     if (isModernNode || (isLegacyNode && !ctx.relations[type])) {
       const nodeTypeId = isModernNode ? str(props.nodeTypeId) : type;
       const pos = absolute(shape);
-      summary.nodes.push({
-        shapeId: shape.id,
-        nodeTypeId,
-        nodeTypeText: ctx.nodes[nodeTypeId]?.text,
-        uid: str(props.uid),
-        title: str(props.title),
-        x: pos.x,
-        y: pos.y,
-        w: num(props.w),
-        h: num(props.h),
-        frame: parentFrame(shape),
-        page: parentPage(shape),
-      });
+      if (nodeTypeId === "blck-node") {
+        summary.blocks.push({
+          shapeId: shape.id,
+          blockUid: str(props.uid),
+          text: str(props.title),
+          x: pos.x,
+          y: pos.y,
+          w: num(props.w),
+          h: num(props.h),
+          frame: parentFrame(shape),
+          page: parentPage(shape),
+        });
+      } else {
+        summary.nodes.push({
+          shapeId: shape.id,
+          nodeTypeId,
+          nodeTypeText: ctx.nodes[nodeTypeId]?.text,
+          uid: str(props.uid),
+          title: str(props.title),
+          x: pos.x,
+          y: pos.y,
+          w: num(props.w),
+          h: num(props.h),
+          frame: parentFrame(shape),
+          page: parentPage(shape),
+        });
+      }
       nodeShapeIds.add(shape.id);
       uidByShapeId.set(shape.id, str(props.uid));
     }
@@ -217,6 +232,7 @@ export const summarizeCanvas = (
   const byPosition = <T extends { y: number; x: number }>(a: T, b: T) =>
     a.y - b.y || a.x - b.x;
   summary.nodes.sort(byPosition);
+  summary.blocks.sort(byPosition);
   summary.texts.sort(byPosition);
   summary.frames.sort(byPosition);
   summary.images.sort(byPosition);

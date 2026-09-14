@@ -234,6 +234,58 @@ export const createNodeShapeRecord = ({
   };
 };
 
+/** Blocks render wider than node cards in the deployed app (~400px). */
+export const estimateBlockSize = (text: string): { w: number; h: number } => {
+  const lines = Math.max(1, Math.ceil(text.length / 45));
+  return { w: 400, h: Math.min(400, 100 + 28 * (lines - 1)) };
+};
+
+/**
+ * A Roam block placed on the canvas: the extension's Block shape, written
+ * under the unified convention (shape.type "discourse-node", nodeTypeId
+ * "blck-node" — a bare "blck-node" shape.type fails loadability at discourse
+ * schema v5, see WRITE POLICY in README.md). props.uid is the BLOCK uid;
+ * props.title snapshots the block's text (live clients re-render from the
+ * uid). Same props key set as node shapes — do not add keys.
+ */
+export const createBlockShapeRecord = ({
+  uid,
+  text,
+  x,
+  y,
+  parentId,
+  index,
+}: {
+  uid: string;
+  text: string;
+  x: number;
+  y: number;
+  parentId: string;
+  index: string;
+}): TldrawRecord => {
+  const { w, h } = estimateBlockSize(text);
+  return {
+    ...baseShape({
+      id: newShapeId(),
+      type: DISCOURSE_NODE_SHAPE_TYPE,
+      parentId,
+      index,
+      x,
+      y,
+    }),
+    props: {
+      w,
+      h,
+      uid,
+      title: text,
+      nodeTypeId: "blck-node",
+      size: "s",
+      fontFamily: "sans",
+      imageUrl: "",
+    },
+  };
+};
+
 const RELATION_COLOR_BY_LABEL: Record<string, string> = {
   supports: "green",
   opposes: "red",

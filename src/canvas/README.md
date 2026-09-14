@@ -83,6 +83,17 @@ correct.
   Terminals bound to a shape (relation arrows from `canvas_connect`) follow their shape
   and are refused; delete and reconnect those instead.
 
+## Blocks (added 2026-09-13)
+
+- Roam blocks are placed via `canvas_add_block` as the extension's Block shape, written
+  under the unified convention (`shape.type = "discourse-node"`, `nodeTypeId =
+  "blck-node"` — a bare `blck-node` shape.type fails loadability at discourse schema v5,
+  see WRITE POLICY above). `props.uid` is the block uid; `props.title` snapshots the
+  block's text (live clients re-render from the uid).
+- The tool never creates blocks — block creation stays with the approval-gated write
+  paths. `canvas_read` reports placed blocks in their own `blocks` section, recognizing
+  both the modern convention and legacy `blck-node` shapes on old boards.
+
 ## Known limitations (v1)
 
 - **Legacy-raw canvases are read-only** (pre-`{store,schema}` snapshots). Open them in Roam

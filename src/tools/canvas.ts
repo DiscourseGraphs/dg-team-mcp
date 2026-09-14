@@ -15,6 +15,7 @@ import {
 import { readCanvasState, summarizeCanvas } from "../canvas/snapshot.js";
 import { mutateCanvas, createCanvasPage } from "../canvas/write.js";
 import {
+  createBlockShapeRecord,
   createNodeShapeRecord,
   createRelationRecords,
   createTextShapeRecord,
@@ -27,7 +28,7 @@ import {
   shapeAbsoluteOrigin,
   shapeNodeTypeId,
 } from "../canvas/records.js";
-import { resolvePage } from "../canvas/props.js";
+import { resolveBlock, resolvePage } from "../canvas/props.js";
 import type { CanvasContext, TldrawRecord } from "../canvas/model.js";
 
 type ToolResult = {
@@ -134,7 +135,7 @@ export const CanvasReadSchema = z.object({
     .describe("Shape ids to also return as raw tldraw records"),
 });
 export const canvasReadDescription =
-  "Read a canvas: discourse nodes (Roam page uid, title, type, absolute position, containing frame), typed relations between them, text shapes, frames, and images (with filename + URL). Lists the board's tldraw pages; on multi-page boards every item names its page. Returns `warnings` for records the Roam app would refuse to load. Optionally include raw tldraw records for specific shape ids.";
+  "Read a canvas: discourse nodes (Roam page uid, title, type, absolute position, containing frame), Roam blocks placed on the board, typed relations between them, text shapes, frames, and images (with filename + URL). Lists the board's tldraw pages; on multi-page boards every item names its page. Returns `warnings` for records the Roam app would refuse to load. Optionally include raw tldraw records for specific shape ids.";
 export const handleCanvasRead = async (
   client: RoamClient,
   nickname: string,
@@ -193,7 +194,7 @@ export const CanvasAddNodeSchema = z.object({
   page: pageField,
 });
 export const canvasAddNodeDescription =
-  "Add a discourse node to a canvas. Either reference an existing Roam page (existing_page = title or uid) or provide node_type + text to create the node page (title formatted per the type's format string; v1 does not fill {Source}-style referenced tokens or insert templates). Returns the new shape id and node page uid.";
+  "Add a discourse node to a canvas. Either reference an existing Roam page (existing_page = title or uid) or provide node_type + text to create the node page (title formatted per the type's format string; v1 does not fill {Source}-style referenced tokens or insert templates). Pages that match no discourse node type get the generic Page shape. For Roam blocks use canvas_add_block. Returns the new shape id and node page uid.";
 export const handleCanvasAddNode = async (
   client: RoamClient,
   nickname: string,
@@ -213,6 +214,11 @@ export const handleCanvasAddNode = async (
         .join(", ")}`,
     );
   }
+  if (nodeType?.id === "blck-node") {
+    throw new Error(
+      "The Block type places Roam blocks — use canvas_add_block with the block's uid.",
+    );
+  }
 
   if (p.existing_page) {
     const resolved =
@@ -226,12 +232,19 @@ export const handleCanvasAddNode = async (
         const prefix = n.format.split(/{content}/i)[0]?.trim();
         return prefix && title.startsWith(prefix);
       });
+      // Not a discourse node: fall back to the generic Page shape.
+      nodeType ??= ctx.nodes["page-node"];
       if (!nodeType)
         throw new Error(
           `Could not infer node type from title "${title}"; pass node_type explicitly.`,
         );
     }
   } else {
+    if (nodeType?.id === "page-node") {
+      throw new Error(
+        "The Page type places existing pages: pass existing_page (canvas_add_node never creates plain pages).",
+      );
+    }
     if (!nodeType || !p.text) throw new Error("Provide node_type + text, or existing_page.");
     title = formatNodeTitle(nodeType, p.text);
     const existing = await resolvePage(client, { title });
@@ -287,6 +300,74 @@ export const handleCanvasAddNode = async (
     nodeTypeId: finalNodeType.id,
     createdPage,
   });
+};
+
+// ── canvas_add_block ────────────────────────────────────────────────────────
+export const CanvasAddBlockSchema = z.object({
+  graph: graphField,
+  canvas: canvasField,
+  block: z.string().describe("Uid of an existing Roam block, or a ((uid)) block ref"),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  page: pageField,
+});
+export const canvasAddBlockDescription =
+  "Place an existing Roam block on a canvas (the extension's Block shape). The block's current text becomes the shape label; live canvases render the block itself. Does not create blocks — create the block first, then pass its uid. For pages use canvas_add_node.";
+export const handleCanvasAddBlock = async (
+  client: RoamClient,
+  nickname: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> => {
+  const p = CanvasAddBlockSchema.parse(args);
+  const ctx = await getCtx(client, nickname);
+
+  const resolved = await resolveBlock(client, p.block);
+  if (!resolved) {
+    throw new Error(
+      `No block with uid "${p.block}". Pass the uid of an existing block (or a ((uid)) ref); this tool does not create blocks.`,
+    );
+  }
+  if ("isPage" in resolved) {
+    throw new Error(
+      `"${resolved.uid}" is a page uid, not a block. Use canvas_add_node with existing_page to place pages.`,
+    );
+  }
+  const { uid, text } = resolved;
+
+  const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store, helpers) => {
+    const targetPage = helpers.resolveTargetPage(p.page);
+    const existingShape = Object.values(store).find(
+      (r) =>
+        r.typeName === "shape" &&
+        shapeNodeTypeId(r) === "blck-node" &&
+        (r.props as { uid?: string } | undefined)?.uid === uid &&
+        helpers.shapePageId(r.id) === targetPage,
+    );
+    if (existingShape) {
+      throw new Error(`Block ((${uid})) is already on this page (shape ${existingShape.id}).`);
+    }
+    let maxY = 0;
+    for (const r of Object.values(store)) {
+      if (
+        r.typeName === "shape" &&
+        typeof r.y === "number" &&
+        helpers.shapePageId(r.id) === targetPage
+      )
+        maxY = Math.max(maxY, r.y + ((r.props as { h?: number })?.h ?? 0));
+    }
+    const shape = createBlockShapeRecord({
+      uid,
+      text,
+      x: p.x ?? 100,
+      y: p.y ?? (maxY ? maxY + 60 : 100),
+      parentId: targetPage,
+      index: nextIndex(store),
+    });
+    store[shape.id] = shape;
+    return { shapeId: shape.id };
+  });
+
+  return ok({ ...result, blockUid: uid, text });
 };
 
 // ── canvas_connect ──────────────────────────────────────────────────────────

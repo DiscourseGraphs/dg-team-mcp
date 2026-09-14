@@ -187,7 +187,7 @@ Open a new Claude session and try:
 By default the server registers the **8-tool discourse-read cluster**:
 `get_discourse_node_types`, `get_all_discourse_nodes`, `search_nodes`, `get_node`,
 `get_linked_nodes`, `get_relationships`, `get_node_neighborhood`, `get_node_section` —
-plus the **10 canvas tools** (see below).
+plus the **11 canvas tools** (see below).
 
 Every other group is **off by default** and re-enabled with an environment
 variable (set to `1`/`true`/`on`/`yes`) in your MCP server config:
@@ -199,7 +199,7 @@ variable (set to `1`/`true`/`on`/`yes`) in your MCP server config:
 | `DG_MCP_PILOT_TOOLS` | pilot-analysis tools (`get_pilot_users`, `search_pilots_live`, `index_pilot_pages`, …) |
 | `DG_MCP_WRITE_TOOLS` | buffered write-visibility tools (`propose_write_batch`, …) + the write-visibility bridge |
 
-The 10 **canvas** tools (read/write discourse-graph canvases — `canvas_list`, `canvas_types`, `canvas_read`, `canvas_create`, `canvas_add_node`, `canvas_connect`, `canvas_add_text`, `canvas_create_frame`, `canvas_move`, `canvas_delete`; see [`src/canvas/README.md`](src/canvas/README.md)) are **on by default**; disable them with `DG_MCP_CANVAS_TOOLS=0`/`false`/`off`/`no`.
+The 11 **canvas** tools (read/write discourse-graph canvases — `canvas_list`, `canvas_types`, `canvas_read`, `canvas_create`, `canvas_add_node`, `canvas_add_block`, `canvas_connect`, `canvas_add_text`, `canvas_create_frame`, `canvas_move`, `canvas_delete`; see [`src/canvas/README.md`](src/canvas/README.md)) are **on by default**; disable them with `DG_MCP_CANVAS_TOOLS=0`/`false`/`off`/`no`.
 
 `create_discourse_relation` (writes stored relation records directly; see [ADR-018](ADR.md)) is likewise **on by default** — disable it with `DG_MCP_RELATION_WRITE=0`/`false`/`off`/`no`. It validates the type pairing, refuses ambiguous labels rather than guessing, is idempotent, and supports `dry_run`.
 

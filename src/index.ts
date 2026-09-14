@@ -93,6 +93,7 @@ import {
   CanvasReadSchema, canvasReadDescription, handleCanvasRead,
   CanvasCreateSchema, canvasCreateDescription, handleCanvasCreate,
   CanvasAddNodeSchema, canvasAddNodeDescription, handleCanvasAddNode,
+  CanvasAddBlockSchema, canvasAddBlockDescription, handleCanvasAddBlock,
   CanvasConnectSchema, canvasConnectDescription, handleCanvasConnect,
   CanvasAddTextSchema, canvasAddTextDescription, handleCanvasAddText,
   CanvasCreateFrameSchema, canvasCreateFrameDescription, handleCanvasCreateFrame,
@@ -641,6 +642,10 @@ server.tool("canvas_create", canvasCreateDescription, CanvasCreateSchema.shape,
 
 server.tool("canvas_add_node", canvasAddNodeDescription, CanvasAddNodeSchema.shape,
   withClient(async (client, nickname, args) => handleCanvasAddNode(client, nickname, args)),
+);
+
+server.tool("canvas_add_block", canvasAddBlockDescription, CanvasAddBlockSchema.shape,
+  withClient(async (client, nickname, args) => handleCanvasAddBlock(client, nickname, args)),
 );
 
 server.tool("canvas_connect", canvasConnectDescription, CanvasConnectSchema.shape,
