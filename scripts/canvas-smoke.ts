@@ -29,9 +29,10 @@ const tools = await client.listTools();
 const names = tools.tools.map((t) => t.name);
 const expected = [
   "canvas_list", "canvas_types", "canvas_read", "canvas_create", "canvas_add_node",
-  "canvas_connect", "canvas_add_text", "canvas_create_frame", "canvas_move", "canvas_delete",
+  "canvas_add_block", "canvas_connect", "canvas_add_text", "canvas_create_frame",
+  "canvas_move", "canvas_delete",
 ];
-check("all 10 canvas tools registered", expected.every((n) => names.includes(n)), names.filter((n) => n.startsWith("canvas")));
+check("all 11 canvas tools registered", expected.every((n) => names.includes(n)), names.filter((n) => n.startsWith("canvas")));
 
 const types = await client.callTool({ name: "canvas_types", arguments: { graph } });
 check("canvas_types returns node + relation types", textOf(types).includes("nodeTypes") && textOf(types).includes("canvasPageFormat"));

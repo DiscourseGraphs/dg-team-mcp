@@ -90,6 +90,18 @@ export type CanvasSummary = {
     frame?: string;
     page?: string;
   }>;
+  /** Roam blocks placed on the canvas (nodeTypeId "blck-node" under either convention). */
+  blocks: Array<{
+    shapeId: string;
+    blockUid: string;
+    text: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    frame?: string;
+    page?: string;
+  }>;
   relations: Array<{
     shapeId: string;
     relationId: string;

@@ -24,6 +24,7 @@ import {
   shapeNodeTypeId,
 } from "../src/canvas/records.js";
 import { resolvePage } from "../src/canvas/props.js";
+import { handleCanvasAddBlock, handleCanvasAddNode } from "../src/tools/canvas.js";
 
 const GRAPH = process.argv[2] ?? "sandbox-dg";
 const STAMP = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
@@ -172,10 +173,69 @@ const main = async () => {
     return { longId: long.id };
   });
 
+  // blocks: create a real block on the canvas page itself, then place it (handler level)
+  const parseTool = (r: { content: Array<{ text: string }> }) => JSON.parse(r.content[0]!.text);
+  const blockUid = generateRoamUid();
+  await client.call("data.block.create", [
+    {
+      location: { "parent-uid": pageUid, order: 0 },
+      block: { string: `e2e block ${STAMP}`, uid: blockUid },
+    },
+  ]);
+  const blockRes = parseTool(
+    await handleCanvasAddBlock(client, nickname, {
+      canvas: pageUid,
+      block: `((${blockUid}))`,
+      x: 300,
+      y: 700,
+    }),
+  );
+  check("add_block: shape created with block text", blockRes.text === `e2e block ${STAMP}`, blockRes);
+
+  let pageRejected = false;
+  try {
+    await handleCanvasAddBlock(client, nickname, { canvas: pageUid, block: pageUid });
+  } catch (e) {
+    pageRejected = /page uid/.test((e as Error).message);
+  }
+  check("add_block: page uid rejected with pointer to add_node", pageRejected);
+
+  let dupRejected = false;
+  try {
+    await handleCanvasAddBlock(client, nickname, { canvas: pageUid, block: blockUid });
+  } catch (e) {
+    dupRejected = /already on this page/.test((e as Error).message);
+  }
+  check("add_block: duplicate on same page rejected", dupRejected);
+
+  let blockTypeRejected = false;
+  try {
+    await handleCanvasAddNode(client, nickname, {
+      canvas: pageUid,
+      node_type: "Block",
+      text: "x",
+    });
+  } catch (e) {
+    blockTypeRejected = /canvas_add_block/.test((e as Error).message);
+  }
+  check("add_node: Block type points to canvas_add_block", blockTypeRejected);
+
   // read back
   const after = await readCanvasState(client, { uid: pageUid });
   const summary = summarizeCanvas(after, ctx);
   check("readback: 2 nodes", summary.nodes.length === 2, summary.nodes);
+  check(
+    "readback: block in its own section",
+    summary.blocks.length === 1 && summary.blocks[0]?.blockUid === blockUid,
+    summary.blocks,
+  );
+  const blockShape = after.store[blockRes.shapeId];
+  check(
+    "add_block: modern shape convention (discourse-node + nodeTypeId blck-node)",
+    blockShape?.type === "discourse-node" &&
+      (blockShape?.props as { nodeTypeId?: string } | undefined)?.nodeTypeId === "blck-node",
+    blockShape,
+  );
   check(
     "readback: relation wired to both node uids",
     summary.relations.length === 1 &&

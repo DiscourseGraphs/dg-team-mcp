@@ -32,6 +32,27 @@ export const getPageProps = async (
   return (normalizeProps(raw) ?? {}) as JsonObject;
 };
 
+/**
+ * Resolve a block by uid (a `((uid))` ref is accepted). Distinguishes pages so
+ * callers can point users at the right tool: returns `{ isPage: true }` when
+ * the uid belongs to a page, null when nothing has that uid.
+ */
+export const resolveBlock = async (
+  client: RoamClient,
+  ref: string,
+): Promise<{ uid: string; text: string } | { uid: string; isPage: true } | null> => {
+  const uid = ref.replace(/^\(\(/, "").replace(/\)\)$/, "").trim();
+  if (!uid) return null;
+  const rows = await datalogQuery<[string]>(
+    client,
+    `[:find ?s :where [?e :block/uid "${escapeDatalogString(uid)}"] [?e :block/string ?s]]`,
+  );
+  const text = rows?.[0]?.[0];
+  if (text !== undefined) return { uid, text };
+  const page = await resolvePage(client, { uid });
+  return page ? { uid, isPage: true } : null;
+};
+
 /** Resolve a page by uid or title; returns null if not found. */
 export const resolvePage = async (
   client: RoamClient,
