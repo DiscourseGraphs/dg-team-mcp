@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A standalone MCP server that gives AI assistants full access to a live Roam Research graph with Discourse Graph support. 60 tools total: 23 Roam base tools (re-exported from `@roam-research/roam-tools-core`) + 22 Discourse Graph tools + 11 canvas tools + 4 buffered write-visibility tools for multi-batch Roam-native write approval.
+A standalone MCP server that gives AI assistants full access to a live Roam Research graph with Discourse Graph support. 61 tools total: 23 Roam base tools (re-exported from `@roam-research/roam-tools-core`) + 23 Discourse Graph tools + 11 canvas tools + 4 buffered write-visibility tools for multi-batch Roam-native write approval.
 
 **Runtime:** Node.js + TypeScript (ESM), runs as a subprocess of Claude Code/Desktop
 **Transport:** stdio (JSON-RPC 2.0)
@@ -153,6 +153,7 @@ src/
 ├── tools/
 │   ├── get-node-types.ts             # get_discourse_node_types
 │   ├── get-all-discourse-nodes.ts    # get_all_discourse_nodes
+│   ├── get-candidate-nodes.ts        # get_candidate_nodes
 │   ├── run-query.ts                  # run_discourse_query
 │   ├── search-nodes.ts              # search_nodes
 │   ├── get-node.ts                  # get_node
@@ -230,6 +231,7 @@ export const parseQuery = (...) => { ... };
 | Tool | What | Data Source |
 |---|---|---|
 | `get_all_discourse_nodes` | All instances of a node type | Tuple Datalog + embedded block-node query |
+| `get_candidate_nodes` | Blocks staged with a type's configured candidate tag | Per-tag Datalog over `:block/refs` |
 | `search_nodes` | Keyword search across titles | Simple Datalog, JS text filter |
 | `get_node` | Full node details by UID | Datalog metadata + recursive tree |
 

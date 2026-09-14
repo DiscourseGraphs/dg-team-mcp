@@ -13,6 +13,9 @@ import {
   GetAllDiscourseNodesSchema, getAllDiscourseNodesDescription, handleGetAllDiscourseNodes,
 } from "./tools/get-all-discourse-nodes.js";
 import {
+  GetCandidateNodesSchema, getCandidateNodesDescription, handleGetCandidateNodes,
+} from "./tools/get-candidate-nodes.js";
+import {
   RunQuerySchema, runQueryDescription, handleRunQuery,
 } from "./tools/run-query.js";
 import {
@@ -108,7 +111,7 @@ const server = new McpServer({
 
 // ── Tool-group toggles ───────────────────────────────────────────────
 // All groups default OFF, so the server exposes only the discourse-read
-// cluster: get_discourse_node_types, get_all_discourse_nodes, search_nodes,
+// cluster: get_discourse_node_types, get_all_discourse_nodes, get_candidate_nodes, search_nodes,
 // get_node, get_linked_nodes, get_relationships, get_node_neighborhood,
 // get_node_section. Opt a group back in by setting its env var to one of
 // 1/true/on/yes in the MCP server config:
@@ -304,6 +307,13 @@ server.tool("get_all_discourse_nodes", getAllDiscourseNodesDescription,
     const since = typeof args.since === "string" ? args.since : undefined;
     return handleGetAllDiscourseNodes(client, since);
   }),
+);
+
+// Candidate nodes: blocks staged with a type's candidate tag, not yet
+// promoted to formal node pages (get_all_discourse_nodes misses these).
+server.tool("get_candidate_nodes", getCandidateNodesDescription,
+  GetCandidateNodesSchema.shape,
+  withClient(async (client, _n, args) => handleGetCandidateNodes(client, args)),
 );
 
 // Tool 3: Run a discourse query by block UID (extra; off by default)
