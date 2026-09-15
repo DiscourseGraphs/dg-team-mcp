@@ -160,6 +160,19 @@ test("createTextShapeRecord: short labels stay autoSize, long labels wrap at 400
   assert.equal(customProps.w, 250);
 });
 
+test("createTextShapeRecord: size passes through, defaults to m, and scales the wrap estimate", () => {
+  const base = { x: 0, y: 0, parentId: "page:page", index: "a1" };
+  assert.equal((createTextShapeRecord({ ...base, text: "t" }).props as { size?: string }).size, "m");
+  const xl = createTextShapeRecord({ ...base, text: "t", size: "xl" });
+  assert.equal((xl.props as { size?: string }).size, "xl");
+  // 34 chars: one line at size s, but past 400px at xl, so xl wraps and s does not.
+  const text = "x".repeat(34);
+  const small = createTextShapeRecord({ ...base, text, size: "s" });
+  assert.equal((small.props as { autoSize?: boolean }).autoSize, true);
+  const big = createTextShapeRecord({ ...base, text, size: "xl" });
+  assert.equal((big.props as { autoSize?: boolean }).autoSize, false);
+});
+
 const arrow = (overrides: Partial<TldrawRecord> = {}): TldrawRecord =>
   ({
     id: "shape:a",

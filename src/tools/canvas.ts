@@ -64,6 +64,10 @@ const graphField = z
 const canvasField = z
   .string()
   .describe("Canvas page title (e.g. 'Canvas/My Map') or its 9-char page uid");
+const sizeField = z
+  .enum(["s", "m", "l", "xl"])
+  .optional()
+  .describe("Text size: s, m (default), l, or xl");
 const pageField = z
   .string()
   .optional()
@@ -463,6 +467,7 @@ export const CanvasAddTextSchema = z.object({
     .positive()
     .optional()
     .describe("Wrap the text at this width in canvas units. Default: one line up to 400, then wrap at 400."),
+  size: sizeField,
   page: pageField,
 });
 export const canvasAddTextDescription =
@@ -482,6 +487,7 @@ export const handleCanvasAddText = async (
       parentId: helpers.resolveTargetPage(p.page),
       index: nextIndex(store),
       width: p.width,
+      size: p.size,
     });
     store[shape.id] = shape;
     return { shapeId: shape.id };
@@ -752,6 +758,7 @@ export const CanvasAddGeoSchema = z.object({
       "black, grey, light-violet, violet, blue, light-blue, yellow, orange, green, light-green, light-red, or red (default black)",
     ),
   fill: z.string().optional().describe("none, semi, solid, or pattern (default none)"),
+  size: sizeField.describe("Label text size: s, m (default), l, or xl"),
   page: pageField,
 });
 export const canvasAddGeoDescription =
@@ -773,6 +780,7 @@ export const handleCanvasAddGeo = async (
       h: p.h ?? 100,
       color: p.color,
       fill: p.fill,
+      size: p.size,
       parentId: helpers.resolveTargetPage(p.page),
       index: nextIndex(store),
     });
@@ -791,6 +799,7 @@ export const CanvasAddArrowSchema = z.object({
   end: arrowPointSchema.describe("Absolute end point"),
   text: z.string().optional().describe("Label at the arrow midpoint"),
   bend: z.number().optional().describe("Curvature; 0 (default) is straight"),
+  size: sizeField.describe("Label text size: s, m (default), l, or xl"),
   page: pageField,
 });
 export const canvasAddArrowDescription =
@@ -808,6 +817,7 @@ export const handleCanvasAddArrow = async (
       end: p.end,
       text: p.text,
       bend: p.bend,
+      size: p.size,
       parentId: helpers.resolveTargetPage(p.page),
       index: nextIndex(store),
     });
