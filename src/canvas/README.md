@@ -74,8 +74,9 @@ correct.
   multi-page boards, names every item's page. Shape-creating writes take an optional
   `page` (name or record id); with several pages and no `page`, the write fails and
   lists the pages rather than dropping shapes on an arbitrary page. `canvas_connect`
-  refuses cross-page arrows; `canvas_move` never changes a shape's page (un-framing
-  re-parents to the shape's own page, and a target frame must be on the same page).
+  refuses cross-page arrows; `canvas_move` moves shapes between pages only via
+  `into_page` (un-framing re-parents to the shape's own page, and a target frame must
+  be on the same page).
 - `canvas_add_text` wraps: labels longer than 400px get `autoSize: false` with a real
   width (tldraw lays autoSize text out on one line, so long labels used to run across
   the canvas). Callers can pass `width` to pick the wrap width.
@@ -93,6 +94,34 @@ correct.
 - The tool never creates blocks — block creation stays with the approval-gated write
   paths. `canvas_read` reports placed blocks in their own `blocks` section, recognizing
   both the modern convention and legacy `blck-node` shapes on old boards.
+
+## Nesting: sub-canvas portals (added 2026-09-14)
+
+**The nesting model, in one line: a canvas is ONE Roam page holding ONE board; nesting
+happens INSIDE it, as multiple tldraw pages linked by portals. Never create a second
+Roam canvas page (`canvas_create`) to nest — that makes a separate, unrelated board.**
+
+- The portal contract is shared with the Roam plugin's nested-pages feature
+  (DiscourseGraphs/discourse-graph#1308, ENG-2150; pinned there by
+  `nestedPagesCompat.test.ts` and here by `tests/canvas-nesting.test.ts`): a portal is
+  a NATIVE `geo` rectangle with `meta.dgSubpage = { targetPageId, accent, title }` and
+  a visible `⤵ page name` text label; the page hierarchy lives in
+  `page.meta.dgNested = { parentPageId, ownerShapeId }`. Deliberately NO custom shape
+  type: unknown shape types blank the whole canvas for clients without the feature,
+  while meta on stock records loads everywhere. Plugin builds with the feature render a
+  live preview and click-to-enter; every other build shows the labeled rectangle on a
+  board that still loads.
+- Workflow: `canvas_add_subpage` creates the target page (cap-guarded, name-deduped)
+  and the portal in one call; populate the target page with the add tools and their
+  `page` parameter; reorganize with `canvas_move` + `into_page`. `canvas_page_rename`
+  re-syncs portal labels; `canvas_page_delete` never cascades into portals (it returns
+  `orphanedPortals` instead); `canvas_link_subpage` re-points or upgrades an existing
+  geo.
+- Content primitives for recapitulating real boards: `canvas_add_geo` (labeled boxes),
+  `canvas_add_arrow` (plain untyped arrows), `canvas_add_image` (URL → asset + image
+  shape; upload local files to Roam first and pass the URL). `canvas_read` surfaces
+  portals (`subpages`), plain geos, and plain arrows as first-class lists, and each
+  page's `parentPageId`.
 
 ## Known limitations (v1)
 

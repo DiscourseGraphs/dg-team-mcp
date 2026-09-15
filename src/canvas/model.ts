@@ -75,8 +75,9 @@ export type CanvasSummary = {
   title: string;
   format: CanvasPageState["format"];
   /** Tldraw pages on this board, in board order. `page` on items below names
-   *  one of these; it is only set when the board has more than one page. */
-  pages: Array<{ id: string; name: string; index: string }>;
+   *  one of these; it is only set when the board has more than one page.
+   *  `parentPageId` comes from page.meta.dgNested (nested sub-canvas lineage). */
+  pages: Array<{ id: string; name: string; index: string; parentPageId?: string }>;
   nodes: Array<{
     shapeId: string;
     nodeTypeId: string;
@@ -137,6 +138,41 @@ export type CanvasSummary = {
     w: number;
     h: number;
     frame?: string;
+    page?: string;
+  }>;
+  /** Nested sub-canvas portals: geo rectangles with meta.dgSubpage. */
+  subpages?: Array<{
+    shapeId: string;
+    targetPageId: string;
+    targetPageName?: string;
+    title?: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    frame?: string;
+    page?: string;
+  }>;
+  /** Plain geo shapes (rectangles, ellipses, …) that are not portals. */
+  geos?: Array<{
+    shapeId: string;
+    geo: string;
+    text: string;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    frame?: string;
+    page?: string;
+  }>;
+  /** Plain (untyped) arrows; typed discourse relations are under `relations`. */
+  arrows?: Array<{
+    shapeId: string;
+    text: string;
+    x: number;
+    y: number;
+    fromShapeId?: string;
+    toShapeId?: string;
     page?: string;
   }>;
   otherShapes: Array<{ shapeId: string; type: string; frame?: string; page?: string }>;

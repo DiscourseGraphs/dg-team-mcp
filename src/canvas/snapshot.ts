@@ -13,6 +13,7 @@ import type {
 } from "./model.js";
 import { getPageProps, resolvePage } from "./props.js";
 import { listPages, shapeAbsoluteOrigin, shapePageId } from "./records.js";
+import { getNestedPageMeta, getSubpageMeta } from "./nesting.js";
 import { findUnloadableRecords } from "./schema.js";
 
 const RJSQB_KEY = "roamjs-query-builder";
@@ -72,7 +73,10 @@ export const summarizeCanvas = (
   const assets = records.filter((r) => r.typeName === "asset");
   const assetById = new Map(assets.map((a) => [a.id, a]));
 
-  const pages = listPages(state.store);
+  const pages = listPages(state.store).map((p) => {
+    const nested = state.store[p.id] ? getNestedPageMeta(state.store[p.id]!) : null;
+    return nested ? { ...p, parentPageId: nested.parentPageId } : p;
+  });
   const summary: CanvasSummary = {
     pageUid: state.pageUid,
     title: state.title,
@@ -183,6 +187,55 @@ export const summarizeCanvas = (
       continue;
     }
 
+    if (type === "geo") {
+      const pos = absolute(shape);
+      const portal = getSubpageMeta(shape);
+      if (portal) {
+        (summary.subpages ??= []).push({
+          shapeId: shape.id,
+          targetPageId: portal.targetPageId,
+          targetPageName: pageNameById.get(portal.targetPageId),
+          title: portal.title,
+          x: pos.x,
+          y: pos.y,
+          w: num(props.w),
+          h: num(props.h),
+          frame: parentFrame(shape),
+          page: parentPage(shape),
+        });
+      } else {
+        (summary.geos ??= []).push({
+          shapeId: shape.id,
+          geo: str(props.geo),
+          text: str(props.text),
+          x: pos.x,
+          y: pos.y,
+          w: num(props.w),
+          h: num(props.h),
+          frame: parentFrame(shape),
+          page: parentPage(shape),
+        });
+      }
+      continue;
+    }
+    if (type === "arrow") {
+      const pos = absolute(shape);
+      const entry: NonNullable<CanvasSummary["arrows"]>[number] = {
+        shapeId: shape.id,
+        text: str(props.text),
+        x: pos.x,
+        y: pos.y,
+        page: parentPage(shape),
+      };
+      for (const b of bindings) {
+        if (b.fromId !== shape.id) continue;
+        const bp = asObject(b.props);
+        if (bp.terminal === "start") entry.fromShapeId = str(b.toId);
+        if (bp.terminal === "end") entry.toShapeId = str(b.toId);
+      }
+      (summary.arrows ??= []).push(entry);
+      continue;
+    }
     if (type === "text") {
       const pos = absolute(shape);
       summary.texts.push({

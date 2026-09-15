@@ -422,6 +422,141 @@ export const createFrameShapeRecord = ({
   props: { w, h, name },
 });
 
+/**
+ * A stock tldraw geo shape (rectangle, ellipse, …). `meta` is how nested
+ * sub-canvas portals ride on this author (meta.dgSubpage — see nesting.ts);
+ * plain content boxes leave it empty. Exactly the 2.4.6 geoShapeProps key set.
+ */
+export const createGeoShapeRecord = ({
+  geo,
+  text = "",
+  x,
+  y,
+  w,
+  h,
+  color = "black",
+  fill = "none",
+  parentId,
+  index,
+  meta = {},
+}: {
+  geo: string;
+  text?: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  color?: string;
+  fill?: string;
+  parentId: string;
+  index: string;
+  meta?: TldrawRecord["meta"];
+}): TldrawRecord => ({
+  ...baseShape({ id: newShapeId(), type: "geo", parentId, index, x, y }),
+  meta,
+  props: {
+    geo,
+    w,
+    h,
+    color,
+    labelColor: "black",
+    fill,
+    dash: "draw",
+    size: "m",
+    font: "sans",
+    text,
+    align: "middle",
+    verticalAlign: "middle",
+    growY: 0,
+    url: "",
+    scale: 1,
+  },
+});
+
+/**
+ * A plain (untyped) tldraw arrow between two absolute points. Endpoints are
+ * stored relative to the shape origin, which sits at `start`. For typed
+ * discourse relations use createRelationRecords instead.
+ */
+export const createArrowShapeRecord = ({
+  start,
+  end,
+  text = "",
+  bend = 0,
+  parentId,
+  index,
+}: {
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+  text?: string;
+  bend?: number;
+  parentId: string;
+  index: string;
+}): TldrawRecord => ({
+  ...baseShape({ id: newShapeId(), type: "arrow", parentId, index, x: start.x, y: start.y }),
+  props: {
+    dash: "draw",
+    size: "m",
+    fill: "none",
+    color: "black",
+    labelColor: "black",
+    bend,
+    start: { x: 0, y: 0 },
+    end: { x: end.x - start.x, y: end.y - start.y },
+    arrowheadStart: "none",
+    arrowheadEnd: "arrow",
+    text,
+    labelPosition: 0.5,
+    font: "draw",
+    scale: 1,
+  },
+});
+
+/** An image shape plus its backing asset record (tldraw stores them separately). */
+export const createImageRecords = ({
+  src,
+  name = "",
+  x,
+  y,
+  w,
+  h,
+  mimeType = "image/png",
+  parentId,
+  index,
+}: {
+  src: string;
+  name?: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  mimeType?: string;
+  parentId: string;
+  index: string;
+}): { asset: TldrawRecord; shape: TldrawRecord } => {
+  const asset: TldrawRecord = {
+    id: `asset:${nanoid()}`,
+    typeName: "asset",
+    type: "image",
+    props: { name, src, w, h, mimeType, isAnimated: false },
+    meta: {},
+  };
+  const shape: TldrawRecord = {
+    ...baseShape({ id: newShapeId(), type: "image", parentId, index, x, y }),
+    props: {
+      w,
+      h,
+      assetId: asset.id,
+      playing: true,
+      url: "",
+      crop: null,
+      flipX: false,
+      flipY: false,
+    },
+  };
+  return { asset, shape };
+};
+
 const asPoint = (v: unknown): { x: number; y: number } => {
   const p = (v ?? {}) as { x?: number; y?: number };
   return { x: typeof p.x === "number" ? p.x : 0, y: typeof p.y === "number" ? p.y : 0 };

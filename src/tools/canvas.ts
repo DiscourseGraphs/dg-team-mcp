@@ -15,7 +15,10 @@ import {
 import { readCanvasState, summarizeCanvas } from "../canvas/snapshot.js";
 import { mutateCanvas, createCanvasPage } from "../canvas/write.js";
 import {
+  createArrowShapeRecord,
   createBlockShapeRecord,
+  createGeoShapeRecord,
+  createImageRecords,
   createNodeShapeRecord,
   createRelationRecords,
   createTextShapeRecord,
@@ -28,6 +31,21 @@ import {
   shapeAbsoluteOrigin,
   shapeNodeTypeId,
 } from "../canvas/records.js";
+import {
+  DEFAULT_PORTAL_ACCENT,
+  DEFAULT_PORTAL_HEIGHT,
+  DEFAULT_PORTAL_WIDTH,
+  assertPageCapacity,
+  createPageRecord,
+  dedupePageName,
+  deletePage,
+  getNestedPageMeta,
+  getSubpageMeta,
+  moveShapesToPage,
+  newPageId,
+  portalLabel,
+  syncPortalLabels,
+} from "../canvas/nesting.js";
 import { resolveBlock, resolvePage } from "../canvas/props.js";
 import type { CanvasContext, TldrawRecord } from "../canvas/model.js";
 
@@ -135,7 +153,7 @@ export const CanvasReadSchema = z.object({
     .describe("Shape ids to also return as raw tldraw records"),
 });
 export const canvasReadDescription =
-  "Read a canvas: discourse nodes (Roam page uid, title, type, absolute position, containing frame), Roam blocks placed on the board, typed relations between them, text shapes, frames, and images (with filename + URL). Lists the board's tldraw pages; on multi-page boards every item names its page. Returns `warnings` for records the Roam app would refuse to load. Optionally include raw tldraw records for specific shape ids.";
+  "Read a canvas: discourse nodes (Roam page uid, title, type, absolute position, containing frame), Roam blocks placed on the board, typed relations between them, text shapes, frames, images (with filename + URL), plain geo shapes and arrows, and nested sub-canvas portals (`subpages`: which page each portal opens into). Lists the board's tldraw pages with their nesting parent (`parentPageId`); on multi-page boards every item names its page. Returns `warnings` for records the Roam app would refuse to load. Optionally include raw tldraw records for specific shape ids.";
 export const handleCanvasRead = async (
   client: RoamClient,
   nickname: string,
@@ -506,6 +524,342 @@ export const handleCanvasCreateFrame = async (
   return ok(result);
 };
 
+// ── canvas_page_create ──────────────────────────────────────────────────────
+export const CanvasPageCreateSchema = z.object({
+  graph: graphField,
+  canvas: canvasField,
+  name: z.string().describe("Name for the new tldraw page"),
+});
+export const canvasPageCreateDescription =
+  "Create a new tldraw page INSIDE an existing canvas. A canvas is one Roam page holding one board; nesting and multi-page organization happen by adding tldraw pages within it, never by creating another canvas page. Colliding names get a numeric suffix; the returned name is the one actually used. Fails loudly at the app's 40-page cap.";
+export const handleCanvasPageCreate = async (
+  client: RoamClient,
+  nickname: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> => {
+  const p = CanvasPageCreateSchema.parse(args);
+  const ctx = await getCtx(client, nickname);
+  const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store) => {
+    assertPageCapacity(store);
+    const name = dedupePageName(store, p.name);
+    const record = createPageRecord({ store, name });
+    store[record.id] = record;
+    return { pageId: record.id, name };
+  });
+  return ok(result);
+};
+
+// ── canvas_page_rename ──────────────────────────────────────────────────────
+export const CanvasPageRenameSchema = z.object({
+  graph: graphField,
+  canvas: canvasField,
+  page: z.string().describe("Tldraw page to rename (name or page record id)"),
+  name: z.string().describe("New name"),
+});
+export const canvasPageRenameDescription =
+  "Rename a tldraw page of a canvas. Portals targeting the page get their visible \"⤵ name\" label and stored title re-synced in the same write.";
+export const handleCanvasPageRename = async (
+  client: RoamClient,
+  nickname: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> => {
+  const p = CanvasPageRenameSchema.parse(args);
+  const ctx = await getCtx(client, nickname);
+  const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store, helpers) => {
+    const pageId = helpers.resolveTargetPage(p.page);
+    const name = dedupePageName(store, p.name, pageId);
+    store[pageId]!.name = name;
+    const portalLabelsUpdated = syncPortalLabels(store, pageId, name);
+    return { pageId, name, portalLabelsUpdated };
+  });
+  return ok(result);
+};
+
+// ── canvas_page_delete ──────────────────────────────────────────────────────
+export const CanvasPageDeleteSchema = z.object({
+  graph: graphField,
+  canvas: canvasField,
+  page: z.string().describe("Tldraw page to delete (name or page record id)"),
+});
+export const canvasPageDeleteDescription =
+  "Delete a tldraw page of a canvas along with every shape on it. Portals elsewhere that pointed at it are NOT deleted (live clients show \"target page not found\"); their shape ids come back as orphanedPortals so you can re-link or delete them deliberately. Refuses to delete the last page.";
+export const handleCanvasPageDelete = async (
+  client: RoamClient,
+  nickname: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> => {
+  const p = CanvasPageDeleteSchema.parse(args);
+  const ctx = await getCtx(client, nickname);
+  const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store, helpers) => {
+    const pageId = helpers.resolveTargetPage(p.page);
+    const { removed, orphanedPortals } = deletePage(store, pageId);
+    return { pageId, removedShapes: removed.length, orphanedPortals };
+  });
+  return ok(result);
+};
+
+// ── canvas_add_subpage ──────────────────────────────────────────────────────
+export const CanvasAddSubpageSchema = z.object({
+  graph: graphField,
+  canvas: canvasField,
+  target_page: z
+    .string()
+    .describe(
+      "Tldraw page the portal opens into (name or page record id). A name that matches no existing page creates the page.",
+    ),
+  title: z
+    .string()
+    .optional()
+    .describe("Portal title bar text; defaults to the target page's name"),
+  accent: z.string().optional().describe(`Portal accent color (hex); default ${DEFAULT_PORTAL_ACCENT}`),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  w: z.number().optional(),
+  h: z.number().optional(),
+  page: pageField,
+});
+export const canvasAddSubpageDescription =
+  "Add a nested sub-canvas portal: a rectangle that previews another tldraw page of the SAME canvas and opens it on click (in plugin builds with the feature; other builds show a labeled \"⤵ name\" rectangle on a board that still loads). Creates the target page when it does not exist yet. Portals persist as native geo shapes with meta.dgSubpage; the page hierarchy lives in page meta. Populate the target page afterwards with the add tools and their `page` parameter.";
+export const handleCanvasAddSubpage = async (
+  client: RoamClient,
+  nickname: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> => {
+  const p = CanvasAddSubpageSchema.parse(args);
+  const ctx = await getCtx(client, nickname);
+  const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store, helpers) => {
+    const parentPageId = helpers.resolveTargetPage(p.page);
+    let targetPageId: string;
+    let targetPageName: string;
+    let createdPage = false;
+    try {
+      targetPageId = helpers.resolveTargetPage(p.target_page);
+      targetPageName = String(store[targetPageId]!.name ?? "");
+    } catch {
+      assertPageCapacity(store);
+      targetPageId = newPageId();
+      targetPageName = dedupePageName(store, p.target_page);
+      createdPage = true;
+    }
+    if (targetPageId === parentPageId) {
+      throw new Error("A portal cannot target the page it lives on.");
+    }
+    const title = p.title ?? targetPageName;
+    const portal = createGeoShapeRecord({
+      geo: "rectangle",
+      text: portalLabel(targetPageName),
+      x: p.x ?? 100,
+      y: p.y ?? 100,
+      w: p.w ?? DEFAULT_PORTAL_WIDTH,
+      h: p.h ?? DEFAULT_PORTAL_HEIGHT,
+      color: "violet",
+      fill: "semi",
+      parentId: parentPageId,
+      index: nextIndex(store),
+      meta: {
+        dgSubpage: { targetPageId, accent: p.accent ?? DEFAULT_PORTAL_ACCENT, title },
+      },
+    });
+    if (createdPage) {
+      const record = createPageRecord({
+        store,
+        name: targetPageName,
+        id: targetPageId,
+        meta: { dgNested: { parentPageId, ownerShapeId: portal.id } },
+      });
+      store[record.id] = record;
+    } else if (!getNestedPageMeta(store[targetPageId]!)) {
+      // First portal into an existing page claims the lineage pointer; an
+      // existing pointer is left alone (first parent wins).
+      store[targetPageId]!.meta = {
+        ...(store[targetPageId]!.meta as object),
+        dgNested: { parentPageId, ownerShapeId: portal.id },
+      };
+    }
+    store[portal.id] = portal;
+    return { shapeId: portal.id, targetPageId, targetPageName, createdPage };
+  });
+  return ok(result);
+};
+
+// ── canvas_link_subpage ─────────────────────────────────────────────────────
+export const CanvasLinkSubpageSchema = z.object({
+  graph: graphField,
+  canvas: canvasField,
+  shape_id: z.string().describe("An existing geo shape to turn into (or re-point as) a portal"),
+  target_page: z.string().describe("Tldraw page the portal should open into (name or page record id)"),
+});
+export const canvasLinkSubpageDescription =
+  "Turn an existing geo rectangle into a nested sub-canvas portal, or re-point an existing portal at a different tldraw page. The target page must already exist (canvas_add_subpage creates pages). Rewrites the shape's \"⤵ name\" label and takes over the target page's lineage pointer.";
+export const handleCanvasLinkSubpage = async (
+  client: RoamClient,
+  nickname: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> => {
+  const p = CanvasLinkSubpageSchema.parse(args);
+  const ctx = await getCtx(client, nickname);
+  const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store, helpers) => {
+    const shape = store[p.shape_id];
+    if (!shape || shape.typeName !== "shape") throw new Error(`Shape not found: ${p.shape_id}`);
+    if (shape.type !== "geo") {
+      throw new Error(
+        `Only geo shapes can be portals; ${p.shape_id} is "${String(shape.type)}". Create one with canvas_add_geo or canvas_add_subpage.`,
+      );
+    }
+    const targetPageId = helpers.resolveTargetPage(p.target_page);
+    const parentPageId = helpers.shapePageId(shape.id) ?? helpers.pageRecordId;
+    if (targetPageId === parentPageId) {
+      throw new Error("A portal cannot target the page it lives on.");
+    }
+    const targetPageName = String(store[targetPageId]!.name ?? "");
+    const existing = getSubpageMeta(shape);
+    shape.meta = {
+      ...(shape.meta as object),
+      dgSubpage: {
+        targetPageId,
+        accent: existing?.accent ?? DEFAULT_PORTAL_ACCENT,
+        title: targetPageName,
+      },
+    };
+    (shape.props as { text?: string }).text = portalLabel(targetPageName);
+    store[targetPageId]!.meta = {
+      ...(store[targetPageId]!.meta as object),
+      dgNested: { parentPageId, ownerShapeId: shape.id },
+    };
+    return { shapeId: shape.id, targetPageId, targetPageName };
+  });
+  return ok(result);
+};
+
+// ── canvas_add_geo ──────────────────────────────────────────────────────────
+export const CanvasAddGeoSchema = z.object({
+  graph: graphField,
+  canvas: canvasField,
+  geo: z
+    .string()
+    .describe(
+      "Geo style: rectangle, ellipse, triangle, diamond, pentagon, hexagon, octagon, star, rhombus, oval, trapezoid, arrow-right, arrow-left, arrow-up, arrow-down, x-box, check-box, cloud",
+    ),
+  text: z.string().optional().describe("Label centered in the shape"),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  w: z.number().optional().describe("Default 200"),
+  h: z.number().optional().describe("Default 100"),
+  color: z
+    .string()
+    .optional()
+    .describe(
+      "black, grey, light-violet, violet, blue, light-blue, yellow, orange, green, light-green, light-red, or red (default black)",
+    ),
+  fill: z.string().optional().describe("none, semi, solid, or pattern (default none)"),
+  page: pageField,
+});
+export const canvasAddGeoDescription =
+  "Add a plain tldraw geo shape (rectangle, ellipse, …) with an optional centered label. This is the general-purpose labeled box; discourse nodes belong in canvas_add_node.";
+export const handleCanvasAddGeo = async (
+  client: RoamClient,
+  nickname: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> => {
+  const p = CanvasAddGeoSchema.parse(args);
+  const ctx = await getCtx(client, nickname);
+  const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store, helpers) => {
+    const shape = createGeoShapeRecord({
+      geo: p.geo,
+      text: p.text,
+      x: p.x ?? 100,
+      y: p.y ?? 100,
+      w: p.w ?? 200,
+      h: p.h ?? 100,
+      color: p.color,
+      fill: p.fill,
+      parentId: helpers.resolveTargetPage(p.page),
+      index: nextIndex(store),
+    });
+    store[shape.id] = shape;
+    return { shapeId: shape.id };
+  });
+  return ok(result);
+};
+
+// ── canvas_add_arrow ────────────────────────────────────────────────────────
+const arrowPointSchema = z.object({ x: z.number(), y: z.number() });
+export const CanvasAddArrowSchema = z.object({
+  graph: graphField,
+  canvas: canvasField,
+  start: arrowPointSchema.describe("Absolute start point"),
+  end: arrowPointSchema.describe("Absolute end point"),
+  text: z.string().optional().describe("Label at the arrow midpoint"),
+  bend: z.number().optional().describe("Curvature; 0 (default) is straight"),
+  page: pageField,
+});
+export const canvasAddArrowDescription =
+  "Add a plain (untyped) arrow between two absolute points, optionally labeled. For typed discourse relations between nodes use canvas_connect instead.";
+export const handleCanvasAddArrow = async (
+  client: RoamClient,
+  nickname: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> => {
+  const p = CanvasAddArrowSchema.parse(args);
+  const ctx = await getCtx(client, nickname);
+  const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store, helpers) => {
+    const shape = createArrowShapeRecord({
+      start: p.start,
+      end: p.end,
+      text: p.text,
+      bend: p.bend,
+      parentId: helpers.resolveTargetPage(p.page),
+      index: nextIndex(store),
+    });
+    store[shape.id] = shape;
+    return { shapeId: shape.id };
+  });
+  return ok(result);
+};
+
+// ── canvas_add_image ────────────────────────────────────────────────────────
+export const CanvasAddImageSchema = z.object({
+  graph: graphField,
+  canvas: canvasField,
+  src: z
+    .string()
+    .describe(
+      "Image URL (https or data URI). For local files, upload to Roam first (e.g. the roam MCP's file_upload) and pass the resulting URL.",
+    ),
+  name: z.string().optional().describe("Filename shown in summaries"),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  w: z.number().optional().describe("Display width; pass the real pixel width when known (default 400)"),
+  h: z.number().optional().describe("Display height (default 300)"),
+  page: pageField,
+});
+export const canvasAddImageDescription =
+  "Place an image on a canvas from a URL (creates the tldraw asset + image shape). Pass real dimensions when known; the canvas does not measure the file.";
+export const handleCanvasAddImage = async (
+  client: RoamClient,
+  nickname: string,
+  args: Record<string, unknown>,
+): Promise<ToolResult> => {
+  const p = CanvasAddImageSchema.parse(args);
+  const ctx = await getCtx(client, nickname);
+  const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store, helpers) => {
+    const { asset, shape } = createImageRecords({
+      src: p.src,
+      name: p.name,
+      x: p.x ?? 100,
+      y: p.y ?? 100,
+      w: p.w ?? 400,
+      h: p.h ?? 300,
+      parentId: helpers.resolveTargetPage(p.page),
+      index: nextIndex(store),
+    });
+    store[asset.id] = asset;
+    store[shape.id] = shape;
+    return { shapeId: shape.id, assetId: asset.id };
+  });
+  return ok(result);
+};
+
 // ── canvas_move ─────────────────────────────────────────────────────────────
 const pointSchema = z.object({ x: z.number(), y: z.number() });
 export const CanvasMoveSchema = z.object({
@@ -530,9 +884,15 @@ export const CanvasMoveSchema = z.object({
     .string()
     .optional()
     .describe("Frame shape id or name to move the shapes into, or 'page' to un-frame them"),
+  into_page: z
+    .string()
+    .optional()
+    .describe(
+      "Tldraw page (name or page record id) to move the shapes to. x/y become optional (shapes keep their coordinates). A bound arrow follows when both its endpoints move; a move that would split one across pages is refused.",
+    ),
 });
 export const canvasMoveDescription =
-  "Move shapes to new positions, or re-aim arrows. All coordinates are ALWAYS absolute canvas coordinates (converted to frame-local storage automatically). Pass x/y to move a shape. For an arrow, pass start and/or end points instead to re-aim it (bound terminals, e.g. from canvas_connect, follow their shape and cannot be re-aimed). Pass into_frame (a frame's shape id or name) to move the shapes into that frame; pass into_frame:'page' to pop them out to the top level.";
+  "Move shapes to new positions, re-aim arrows, or move shapes to another tldraw page. All coordinates are ALWAYS absolute canvas coordinates (converted to frame-local storage automatically). Pass x/y to move a shape. For an arrow, pass start and/or end points instead to re-aim it (bound terminals, e.g. from canvas_connect, follow their shape and cannot be re-aimed). Pass into_frame (a frame's shape id or name) to move the shapes into that frame; pass into_frame:'page' to pop them out to the top level. Pass into_page (a tldraw page name or id) to move shapes between the board's pages.";
 export const handleCanvasMove = async (
   client: RoamClient,
   nickname: string,
@@ -541,6 +901,9 @@ export const handleCanvasMove = async (
   const p = CanvasMoveSchema.parse(args);
   const ctx = await getCtx(client, nickname);
   const result = await mutateCanvas(client, canvasRef(p.canvas), ctx, (store, helpers) => {
+    if (p.into_frame && p.into_page) {
+      throw new Error("Pass either into_frame or into_page, not both.");
+    }
     let targetFrameId: string | undefined;
     let unframe = false;
     let frameName: string | undefined;
@@ -568,6 +931,7 @@ export const handleCanvasMove = async (
         continue;
       }
       if (move.x === undefined || move.y === undefined) {
+        if (p.into_page) continue; // page move keeps coordinates
         throw new Error(`${move.shape_id}: pass x and y (or start/end for an arrow).`);
       }
       // A shape never changes tldraw page: un-framing re-parents to ITS page,
@@ -588,10 +952,20 @@ export const handleCanvasMove = async (
       shape.y = move.y - origin.y;
       if (targetFrameId || unframe) shape.index = nextIndex(store);
     }
+    let pageMove: { moved: number; arrowsMoved: number } | undefined;
+    if (p.into_page) {
+      const targetPage = helpers.resolveTargetPage(p.into_page);
+      pageMove = moveShapesToPage(
+        store,
+        p.moves.map((m) => m.shape_id),
+        targetPage,
+      );
+    }
     return {
       moved: p.moves.length - repointed,
       ...(repointed ? { repointed } : {}),
       ...(p.into_frame ? { intoFrame: frameName ?? "page" } : {}),
+      ...(pageMove ? { intoPage: p.into_page, arrowsMoved: pageMove.arrowsMoved } : {}),
     };
   });
   return ok(result);
