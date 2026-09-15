@@ -102,6 +102,14 @@ import {
   CanvasCreateFrameSchema, canvasCreateFrameDescription, handleCanvasCreateFrame,
   CanvasMoveSchema, canvasMoveDescription, handleCanvasMove,
   CanvasDeleteSchema, canvasDeleteDescription, handleCanvasDelete,
+  CanvasPageCreateSchema, canvasPageCreateDescription, handleCanvasPageCreate,
+  CanvasPageRenameSchema, canvasPageRenameDescription, handleCanvasPageRename,
+  CanvasPageDeleteSchema, canvasPageDeleteDescription, handleCanvasPageDelete,
+  CanvasAddSubpageSchema, canvasAddSubpageDescription, handleCanvasAddSubpage,
+  CanvasLinkSubpageSchema, canvasLinkSubpageDescription, handleCanvasLinkSubpage,
+  CanvasAddGeoSchema, canvasAddGeoDescription, handleCanvasAddGeo,
+  CanvasAddArrowSchema, canvasAddArrowDescription, handleCanvasAddArrow,
+  CanvasAddImageSchema, canvasAddImageDescription, handleCanvasAddImage,
 } from "./tools/canvas.js";
 
 const server = new McpServer({
@@ -676,6 +684,38 @@ server.tool("canvas_move", canvasMoveDescription, CanvasMoveSchema.shape,
 
 server.tool("canvas_delete", canvasDeleteDescription, CanvasDeleteSchema.shape,
   withClient(async (client, nickname, args) => handleCanvasDelete(client, nickname, args)),
+);
+
+server.tool("canvas_page_create", canvasPageCreateDescription, CanvasPageCreateSchema.shape,
+  withClient(async (client, nickname, args) => handleCanvasPageCreate(client, nickname, args)),
+);
+
+server.tool("canvas_page_rename", canvasPageRenameDescription, CanvasPageRenameSchema.shape,
+  withClient(async (client, nickname, args) => handleCanvasPageRename(client, nickname, args)),
+);
+
+server.tool("canvas_page_delete", canvasPageDeleteDescription, CanvasPageDeleteSchema.shape,
+  withClient(async (client, nickname, args) => handleCanvasPageDelete(client, nickname, args)),
+);
+
+server.tool("canvas_add_subpage", canvasAddSubpageDescription, CanvasAddSubpageSchema.shape,
+  withClient(async (client, nickname, args) => handleCanvasAddSubpage(client, nickname, args)),
+);
+
+server.tool("canvas_link_subpage", canvasLinkSubpageDescription, CanvasLinkSubpageSchema.shape,
+  withClient(async (client, nickname, args) => handleCanvasLinkSubpage(client, nickname, args)),
+);
+
+server.tool("canvas_add_geo", canvasAddGeoDescription, CanvasAddGeoSchema.shape,
+  withClient(async (client, nickname, args) => handleCanvasAddGeo(client, nickname, args)),
+);
+
+server.tool("canvas_add_arrow", canvasAddArrowDescription, CanvasAddArrowSchema.shape,
+  withClient(async (client, nickname, args) => handleCanvasAddArrow(client, nickname, args)),
+);
+
+server.tool("canvas_add_image", canvasAddImageDescription, CanvasAddImageSchema.shape,
+  withClient(async (client, nickname, args) => handleCanvasAddImage(client, nickname, args)),
 );
 
 } // end canvas tools (DG_MCP_CANVAS_TOOLS)

@@ -364,9 +364,15 @@ export const createRelationRecords = ({
 // tldraw lays autoSize text out on ONE line, ignoring the stored width, so a
 // long label becomes a horizontal streak across the canvas. Labels that would
 // exceed this width wrap instead (autoSize false + a real width). ~12px is an
-// eyeballed average glyph width for the "draw" font at size "m" (25px).
+// eyeballed average glyph width for the "draw" font at size "m" (25px); other
+// sizes scale by tldraw 2.4.6's FONT_SIZES.
 const TEXT_WRAP_WIDTH = 400;
 const TEXT_GLYPH_WIDTH = 12;
+const FONT_SIZE_PX: Record<TldrawTextSize, number> = { s: 18, m: 25, l: 38, xl: 48 };
+
+/** tldraw's text size scale; single source for the tool schemas' enum. */
+export const TLDRAW_TEXT_SIZES = ["s", "m", "l", "xl"] as const;
+export type TldrawTextSize = (typeof TLDRAW_TEXT_SIZES)[number];
 
 export const createTextShapeRecord = ({
   text,
@@ -375,6 +381,7 @@ export const createTextShapeRecord = ({
   parentId,
   index,
   width,
+  size = "m",
 }: {
   text: string;
   x: number;
@@ -383,14 +390,16 @@ export const createTextShapeRecord = ({
   index: string;
   /** Wrap the text at this width. Default: single line up to 400px, then wrap at 400. */
   width?: number;
+  size?: TldrawTextSize;
 }): TldrawRecord => {
-  const naturalWidth = Math.max(8, Math.ceil(text.length * TEXT_GLYPH_WIDTH));
+  const glyphWidth = (TEXT_GLYPH_WIDTH * FONT_SIZE_PX[size]) / FONT_SIZE_PX.m;
+  const naturalWidth = Math.max(8, Math.ceil(text.length * glyphWidth));
   const wrapWidth = width ?? (naturalWidth > TEXT_WRAP_WIDTH ? TEXT_WRAP_WIDTH : undefined);
   return {
     ...baseShape({ id: newShapeId(), type: "text", parentId, index, x, y }),
     props: {
       color: "black",
-      size: "m",
+      size,
       font: "draw",
       textAlign: "start",
       autoSize: wrapWidth === undefined,
@@ -421,6 +430,145 @@ export const createFrameShapeRecord = ({
   ...baseShape({ id: newShapeId(), type: "frame", parentId, index, x, y }),
   props: { w, h, name },
 });
+
+/**
+ * A stock tldraw geo shape (rectangle, ellipse, …). `meta` is how nested
+ * sub-canvas portals ride on this author (meta.dgSubpage — see nesting.ts);
+ * plain content boxes leave it empty. Exactly the 2.4.6 geoShapeProps key set.
+ */
+export const createGeoShapeRecord = ({
+  geo,
+  text = "",
+  x,
+  y,
+  w,
+  h,
+  color = "black",
+  fill = "none",
+  size = "m",
+  parentId,
+  index,
+  meta = {},
+}: {
+  geo: string;
+  text?: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  color?: string;
+  fill?: string;
+  size?: TldrawTextSize;
+  parentId: string;
+  index: string;
+  meta?: TldrawRecord["meta"];
+}): TldrawRecord => ({
+  ...baseShape({ id: newShapeId(), type: "geo", parentId, index, x, y }),
+  meta,
+  props: {
+    geo,
+    w,
+    h,
+    color,
+    labelColor: "black",
+    fill,
+    dash: "draw",
+    size,
+    font: "sans",
+    text,
+    align: "middle",
+    verticalAlign: "middle",
+    growY: 0,
+    url: "",
+    scale: 1,
+  },
+});
+
+/**
+ * A plain (untyped) tldraw arrow between two absolute points. Endpoints are
+ * stored relative to the shape origin, which sits at `start`. For typed
+ * discourse relations use createRelationRecords instead.
+ */
+export const createArrowShapeRecord = ({
+  start,
+  end,
+  text = "",
+  bend = 0,
+  size = "m",
+  parentId,
+  index,
+}: {
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+  text?: string;
+  bend?: number;
+  size?: TldrawTextSize;
+  parentId: string;
+  index: string;
+}): TldrawRecord => ({
+  ...baseShape({ id: newShapeId(), type: "arrow", parentId, index, x: start.x, y: start.y }),
+  props: {
+    dash: "draw",
+    size,
+    fill: "none",
+    color: "black",
+    labelColor: "black",
+    bend,
+    start: { x: 0, y: 0 },
+    end: { x: end.x - start.x, y: end.y - start.y },
+    arrowheadStart: "none",
+    arrowheadEnd: "arrow",
+    text,
+    labelPosition: 0.5,
+    font: "draw",
+    scale: 1,
+  },
+});
+
+/** An image shape plus its backing asset record (tldraw stores them separately). */
+export const createImageRecords = ({
+  src,
+  name = "",
+  x,
+  y,
+  w,
+  h,
+  mimeType = "image/png",
+  parentId,
+  index,
+}: {
+  src: string;
+  name?: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  mimeType?: string;
+  parentId: string;
+  index: string;
+}): { asset: TldrawRecord; shape: TldrawRecord } => {
+  const asset: TldrawRecord = {
+    id: `asset:${nanoid()}`,
+    typeName: "asset",
+    type: "image",
+    props: { name, src, w, h, mimeType, isAnimated: false },
+    meta: {},
+  };
+  const shape: TldrawRecord = {
+    ...baseShape({ id: newShapeId(), type: "image", parentId, index, x, y }),
+    props: {
+      w,
+      h,
+      assetId: asset.id,
+      playing: true,
+      url: "",
+      crop: null,
+      flipX: false,
+      flipY: false,
+    },
+  };
+  return { asset, shape };
+};
 
 const asPoint = (v: unknown): { x: number; y: number } => {
   const p = (v ?? {}) as { x?: number; y?: number };
