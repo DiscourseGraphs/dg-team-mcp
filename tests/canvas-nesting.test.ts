@@ -20,6 +20,7 @@ import {
 import {
   MAX_TLDRAW_PAGES,
   assertPageCapacity,
+  buildSubpageMeta,
   createPageRecord,
   dedupePageName,
   deletePage,
@@ -75,7 +76,7 @@ const makePortal = (store: SerializedStore, targetPageId: string, parentId = "pa
     fill: "semi",
     parentId,
     index: nextIndex(store),
-    meta: { dgSubpage: { targetPageId, accent: "#6d5ae0", title: "Child" } },
+    meta: buildSubpageMeta({ targetPageId, accent: "#6d5ae0", title: "Child" }),
   });
 
 // ── page records ────────────────────────────────────────────────────────────

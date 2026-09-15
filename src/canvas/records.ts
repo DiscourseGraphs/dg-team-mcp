@@ -370,7 +370,9 @@ const TEXT_WRAP_WIDTH = 400;
 const TEXT_GLYPH_WIDTH = 12;
 const FONT_SIZE_PX: Record<TldrawTextSize, number> = { s: 18, m: 25, l: 38, xl: 48 };
 
-export type TldrawTextSize = "s" | "m" | "l" | "xl";
+/** tldraw's text size scale; single source for the tool schemas' enum. */
+export const TLDRAW_TEXT_SIZES = ["s", "m", "l", "xl"] as const;
+export type TldrawTextSize = (typeof TLDRAW_TEXT_SIZES)[number];
 
 export const createTextShapeRecord = ({
   text,

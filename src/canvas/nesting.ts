@@ -38,6 +38,18 @@ export type NestedPageMeta = {
   ownerShapeId?: string;
 };
 
+/** The meta fragment that makes a geo shape a portal. Single home of the
+ *  "dgSubpage" key; spread into a shape's meta. */
+export const buildSubpageMeta = (meta: SubpageMeta): { dgSubpage: SubpageMeta } => ({
+  dgSubpage: meta,
+});
+
+/** The meta fragment that records a page's nesting parent. Single home of the
+ *  "dgNested" key; spread into a page's meta. */
+export const buildNestedPageMeta = (
+  meta: NestedPageMeta,
+): { dgNested: NestedPageMeta } => ({ dgNested: meta });
+
 /** Parse a shape's portal meta; a portal requires a string targetPageId. */
 export const getSubpageMeta = (record: TldrawRecord): SubpageMeta | null => {
   const meta = record.meta;

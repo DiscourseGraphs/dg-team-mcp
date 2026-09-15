@@ -74,7 +74,8 @@ export const summarizeCanvas = (
   const assetById = new Map(assets.map((a) => [a.id, a]));
 
   const pages = listPages(state.store).map((p) => {
-    const nested = state.store[p.id] ? getNestedPageMeta(state.store[p.id]!) : null;
+    // listPages ids come from the store, so the record is always present.
+    const nested = getNestedPageMeta(state.store[p.id]!);
     return nested ? { ...p, parentPageId: nested.parentPageId } : p;
   });
   const summary: CanvasSummary = {

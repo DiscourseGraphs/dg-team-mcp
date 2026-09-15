@@ -15,6 +15,7 @@ import {
 import { readCanvasState, summarizeCanvas } from "../canvas/snapshot.js";
 import { mutateCanvas, createCanvasPage } from "../canvas/write.js";
 import {
+  TLDRAW_TEXT_SIZES,
   createArrowShapeRecord,
   createBlockShapeRecord,
   createGeoShapeRecord,
@@ -33,6 +34,8 @@ import {
 } from "../canvas/records.js";
 import {
   DEFAULT_PORTAL_ACCENT,
+  buildNestedPageMeta,
+  buildSubpageMeta,
   DEFAULT_PORTAL_HEIGHT,
   DEFAULT_PORTAL_WIDTH,
   assertPageCapacity,
@@ -65,7 +68,7 @@ const canvasField = z
   .string()
   .describe("Canvas page title (e.g. 'Canvas/My Map') or its 9-char page uid");
 const sizeField = z
-  .enum(["s", "m", "l", "xl"])
+  .enum(TLDRAW_TEXT_SIZES)
   .optional()
   .describe("Text size: s, m (default), l, or xl");
 const pageField = z
@@ -662,16 +665,18 @@ export const handleCanvasAddSubpage = async (
       fill: "semi",
       parentId: parentPageId,
       index: nextIndex(store),
-      meta: {
-        dgSubpage: { targetPageId, accent: p.accent ?? DEFAULT_PORTAL_ACCENT, title },
-      },
+      meta: buildSubpageMeta({
+        targetPageId,
+        accent: p.accent ?? DEFAULT_PORTAL_ACCENT,
+        title,
+      }),
     });
     if (createdPage) {
       const record = createPageRecord({
         store,
         name: targetPageName,
         id: targetPageId,
-        meta: { dgNested: { parentPageId, ownerShapeId: portal.id } },
+        meta: buildNestedPageMeta({ parentPageId, ownerShapeId: portal.id }),
       });
       store[record.id] = record;
     } else if (!getNestedPageMeta(store[targetPageId]!)) {
@@ -679,7 +684,7 @@ export const handleCanvasAddSubpage = async (
       // existing pointer is left alone (first parent wins).
       store[targetPageId]!.meta = {
         ...(store[targetPageId]!.meta as object),
-        dgNested: { parentPageId, ownerShapeId: portal.id },
+        ...buildNestedPageMeta({ parentPageId, ownerShapeId: portal.id }),
       };
     }
     store[portal.id] = portal;
@@ -721,16 +726,16 @@ export const handleCanvasLinkSubpage = async (
     const existing = getSubpageMeta(shape);
     shape.meta = {
       ...(shape.meta as object),
-      dgSubpage: {
+      ...buildSubpageMeta({
         targetPageId,
         accent: existing?.accent ?? DEFAULT_PORTAL_ACCENT,
         title: targetPageName,
-      },
+      }),
     };
     (shape.props as { text?: string }).text = portalLabel(targetPageName);
     store[targetPageId]!.meta = {
       ...(store[targetPageId]!.meta as object),
-      dgNested: { parentPageId, ownerShapeId: shape.id },
+      ...buildNestedPageMeta({ parentPageId, ownerShapeId: shape.id }),
     };
     return { shapeId: shape.id, targetPageId, targetPageName };
   });
