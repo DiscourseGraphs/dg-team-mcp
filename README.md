@@ -184,10 +184,10 @@ Open a new Claude session and try:
 
 ## Tool groups
 
-By default the server registers the **8-tool discourse-read cluster**:
-`get_discourse_node_types`, `get_all_discourse_nodes`, `search_nodes`, `get_node`,
-`get_linked_nodes`, `get_relationships`, `get_node_neighborhood`, `get_node_section` —
-plus the **11 canvas tools** (see below).
+By default the server registers the **9-tool discourse-read cluster**:
+`get_discourse_node_types`, `get_all_discourse_nodes`, `get_candidate_nodes`,
+`search_nodes`, `get_node`, `get_linked_nodes`, `get_relationships`,
+`get_node_neighborhood`, `get_node_section` — plus the **11 canvas tools** (see below).
 
 Every other group is **off by default** and re-enabled with an environment
 variable (set to `1`/`true`/`on`/`yes`) in your MCP server config:
@@ -461,6 +461,7 @@ Up to 59 tools: 23 Roam base + 22 Discourse Graph + 10 Canvas + 4 Buffered Write
 | Tool | Description |
 |------|-------------|
 | `get_all_discourse_nodes` | Find all instances of a node type, optionally filter by date |
+| `get_candidate_nodes` | Blocks staged with a type's candidate tag (e.g. `#evd-candidate`), not yet promoted to node pages |
 | `search_nodes` | Keyword search across discourse node titles |
 | `get_node` | Full node details: title, content tree, creator, dates |
 
